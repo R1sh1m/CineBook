@@ -1,106 +1,91 @@
 #!/usr/bin/env bash
+# run.sh — CineBook auto-setup launcher (Linux / macOS / MSYS2)
+# ─────────────────────────────────────────────────────────────
+# Usage:  bash run.sh
+# ─────────────────────────────────────────────────────────────
+
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+RED='\033[0;31m'; GRN='\033[0;32m'; YLW='\033[0;33m'
+CYN='\033[0;36m'; BLD='\033[1m'; RST='\033[0m'
 
-OS_NAME="$(uname -s 2>/dev/null || echo unknown)"
+ok()   { echo -e "${GRN}${BLD}  ✓ $*${RST}"; }
+warn() { echo -e "${YLW}${BLD}  ! $*${RST}"; }
+die()  { echo -e "${RED}${BLD}  ✗ $*${RST}"; exit 1; }
 
-ensure_dirs() {
-  mkdir -p "data/db" "data/idx" "exports"
-}
+echo
+echo -e "${CYN}${BLD}  CineBook — Auto Setup & Launch${RST}"
+echo "  ────────────────────────────────────"
 
-check_macos_deps() {
-  if ! command -v brew >/dev/null 2>&1; then
-    echo "[run] Homebrew not found. Install Homebrew first: https://brew.sh"
-  fi
-
-  local brew_prefix=""
-  if command -v brew >/dev/null 2>&1; then
-    brew_prefix="$(brew --prefix curl 2>/dev/null || true)"
-  fi
-
-  if [[ -n "$brew_prefix" ]]; then
-    export DYLD_LIBRARY_PATH="$brew_prefix/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
-    export CPPFLAGS="-I$brew_prefix/include ${CPPFLAGS:-}"
-    export LDFLAGS="-L$brew_prefix/lib ${LDFLAGS:-}"
-  elif [[ -d "/usr/local/lib" ]]; then
-    export DYLD_LIBRARY_PATH="/usr/local/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
-  fi
-
-  if ! command -v curl >/dev/null 2>&1; then
-    echo "[run] curl/libcurl appears missing. Install with: brew install curl"
-  fi
-}
-
-check_linux_deps() {
-  if command -v ldconfig >/dev/null 2>&1; then
-    if ! ldconfig -p 2>/dev/null | grep -q "libcurl"; then
-      if command -v apt-get >/dev/null 2>&1; then
-        echo "[run] libcurl dev package may be missing. Install:"
-        echo "      sudo apt-get install -y libcurl4-openssl-dev"
-      elif command -v dnf >/dev/null 2>&1; then
-        echo "[run] libcurl dev package may be missing. Install:"
-        echo "      sudo dnf install -y libcurl-devel"
-      fi
-    fi
-  fi
-
-  if command -v apt-get >/dev/null 2>&1; then
-    :
-  elif command -v dnf >/dev/null 2>&1; then
-    :
-  else
-    echo "[run] Neither apt nor dnf detected. Ensure gcc/g++ and libcurl dev are installed."
-  fi
-
-  if [[ -d "/usr/local/lib" ]]; then
-    export LD_LIBRARY_PATH="/usr/local/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-  fi
-}
-
-build_if_needed() {
-  if [[ ! -x "./cinebook" ]]; then
-    echo "[run] ./cinebook not found. Building..."
-    make
-  fi
-}
-
-seed_if_needed() {
-  if [[ ! -f "data/db/users.db" ]]; then
-    echo "[run] users.db not found. Seeding database..."
-    rm -f "./seed"
-    gcc -std=c11 -Wall -o seed tools/seed.c
-    ./seed
-    rm -f "./seed"
-  fi
-}
-
-run_app() {
-  ./cinebook || {
-    code=$?
-    echo "[run] cinebook failed to start or exited with code $code."
-    echo "[run] Check README for dependency/runtime setup."
-    exit "$code"
-  }
-}
-
-ensure_dirs
-
-case "$OS_NAME" in
-  Darwin)
-    check_macos_deps
-    ;;
-  Linux)
-    check_linux_deps
-    ;;
-  *)
-    echo "[run] Unsupported OS for run.sh: $OS_NAME"
-    echo "[run] Use run.bat on Windows, or run manually."
-    exit 1
-    ;;
+# ── 1. Detect OS / environment ─────────────────────────────────────────────
+OS="$(uname -s)"
+case "$OS" in
+    Linux*)     PLATFORM="linux" ;;
+    Darwin*)    PLATFORM="macos" ;;
+    MINGW*|MSYS*|CYGWIN*)  PLATFORM="msys2" ;;
+    *)          die "Unsupported platform: $OS" ;;
 esac
+ok "Platform: $PLATFORM"
 
-build_if_needed
-seed_if_needed
-run_app
+# ── 2. Install missing dependencies ────────────────────────────────────────
+case "$PLATFORM" in
+    linux)
+        if ! command -v gcc &>/dev/null; then
+            warn "gcc not found — installing build-essential..."
+            sudo apt-get update -qq && sudo apt-get install -y -qq build-essential
+        fi
+        if ! dpkg -l libcurl4-openssl-dev &>/dev/null 2>&1; then
+            warn "libcurl-dev not found — installing..."
+            sudo apt-get install -y -qq libcurl4-openssl-dev 2>/dev/null || \
+            sudo dnf install -y -q libcurl-devel 2>/dev/null || \
+            warn "Could not install libcurl automatically. Please run: sudo apt install libcurl4-openssl-dev"
+        fi
+        ;;
+    macos)
+        if ! command -v brew &>/dev/null; then
+            die "Homebrew is required on macOS. Install it from https://brew.sh and re-run."
+        fi
+        if ! brew list curl &>/dev/null 2>&1; then
+            warn "curl not found via Homebrew — installing..."
+            brew install curl
+        fi
+        ;;
+    msys2)
+        if ! command -v gcc &>/dev/null; then
+            warn "gcc not found — installing MinGW toolchain..."
+            pacman -S --needed --noconfirm mingw-w64-x86_64-gcc mingw-w64-x86_64-curl-openssl make
+        fi
+        ;;
+esac
+ok "Dependencies ready"
+
+# ── 3. Create runtime directories ──────────────────────────────────────────
+mkdir -p data/db data/idx exports
+ok "Runtime directories ready"
+
+# ── 4. Build ────────────────────────────────────────────────────────────────
+echo
+echo -e "${CYN}  Building CineBook...${RST}"
+if ! make -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)"; then
+    die "Build failed. Check errors above."
+fi
+ok "Build complete"
+
+# ── 5. Seed database (only if empty) ───────────────────────────────────────
+DB_COUNT=$(ls data/db/*.db 2>/dev/null | wc -l || echo 0)
+if (( DB_COUNT == 0 )); then
+    echo
+    echo -e "${CYN}  Seeding database (first run)...${RST}"
+    gcc -std=c11 -Wall -O2 -o seed tools/seed.c || die "Seeder compilation failed."
+    ./seed || die "Seeder failed."
+    ok "Database seeded"
+else
+    ok "Database already seeded ($DB_COUNT tables found)"
+fi
+
+# ── 6. Launch ───────────────────────────────────────────────────────────────
+echo
+echo -e "${CYN}${BLD}  Launching CineBook...${RST}"
+echo "  Admin login → phone: 9000000001 | password: admin123"
+echo
+./cinebook

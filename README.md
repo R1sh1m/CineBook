@@ -11,13 +11,12 @@
    ╚═════╝╚═╝╚═╝  ╚═══╝╚══════╝╚═════╝  ╚═════╝  ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**A feature-complete, terminal-based cinema booking platform built from scratch in C/C++**
+**A feature-complete terminal cinema booking platform built from scratch in C/C++ — no SQLite, no Django, no shortcuts.**
 
-[![Language](https://img.shields.io/badge/Language-C11%20%2F%20C%2B%2B17-blue?style=flat-square&logo=c)](#)
-[![Engine](https://img.shields.io/badge/Database-Custom%20RDBMS-green?style=flat-square)](#)
-[![API](https://img.shields.io/badge/API-TMDB%20Live%20Data-yellow?style=flat-square)](#)
-[![Build](https://img.shields.io/badge/Build-gcc%20%2F%20g%2B%2B-orange?style=flat-square&logo=gnu)](#)
-[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20(MSYS2)-lightgrey?style=flat-square)](#)
+[![Language](https://img.shields.io/badge/C11%20%2F%20C%2B%2B17-primary-blue?style=flat-square&logo=c)](#)
+[![Engine](https://img.shields.io/badge/Database-Custom%20RDBMS-brightgreen?style=flat-square)](#)
+[![TMDB](https://img.shields.io/badge/TMDB-Live%20Movie%20Data-01d277?style=flat-square)](#)
+[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey?style=flat-square)](#)
 [![License](https://img.shields.io/badge/License-MIT-purple?style=flat-square)](#)
 
 *Your Cinema. Your Seats. Your Story.*
@@ -26,61 +25,306 @@
 
 ---
 
-##  What is CineBook?
+## What is CineBook?
 
-CineBook is a **fully functional, terminal-based cinema booking system**. It simulates a real-world booking platform with live movie data pulled from [The Movie Database (TMDB)](https://www.themoviedb.org/), backed by a **custom RDBMS engine** with page storage, write-ahead logging (WAL), and in-memory hash/sorted indexes.
+CineBook is a fully functional, terminal-based cinema booking system built as a BACSE104 course project.
+It simulates a real-world booking platform with:
 
-No SQLite. No Python. No third-party database. Every byte on disk is managed by code written from scratch.
+- **Live movie data** pulled from [TMDB](https://www.themoviedb.org/) via libcurl
+- A **custom RDBMS engine** written from scratch — 4 KB page files, WAL crash recovery, LRU buffer pool, hash + sorted indexes
+- A **C++ OOP analytics layer** with abstract report classes, polymorphic dispatch, and STL containers
+- A rich **ANSI terminal UI** — interactive seat maps, price breakdowns, booking receipts
 
----
-
-##  Feature Highlights
-
-| Category | Features |
-|----------|----------|
-| 🎥 **Live Movie Data** | TMDB API integration — search & import real movies with cast, synopsis, genre, runtime |
-| 🏟️ **Theatre Management** | Multi-city, multi-theatre, multi-screen support (2D / IMAX 2D / IMAX 3D / 4DX) |
-| 💺 **Interactive Seat Map** | ANSI colour-coded 2D grid — select/deselect seats, live availability, lazy hold expiry |
-| 💰 **Dynamic Pricing** | 12-slot breakdown: screen surcharge, seat type multiplier, weekend/peak surge, GST, group & student discounts |
-| 🎟️ **Promo Codes** | Percentage and flat-rate codes with role masks, usage limits, and date ranges |
-| 💳 **Payment Simulation** | Wallet, UPI (VPA validation), Card (Luhn check), Net Banking — all simulated realistically |
-| 🔄 **Refund Engine** | Time-tiered refund policy (100% / 75% / 50% / 0%) with atomic WAL-backed cancellation |
-| 📊 **Admin Analytics** | Occupancy, Revenue, and Booking Trend reports via C++ OOP layer with ANSI bar charts |
-| 📥 **CSV Export** | One-click dashboard export to `exports/` directory |
-| 🔐 **Auth System** | SHA-256 password hashing (pure C, no OpenSSL), academic domain detection for student upgrades |
-| 🔔 **Waitlist & Notifications** | Auto-notify waitlisted users when seats free up |
-| 💾 **Custom RDBMS** | Page-based binary storage, buffer pool (LRU), WAL crash recovery, hash + sorted indexes |
+No SQLite. No PostgreSQL. No Python. Every byte on disk is managed by hand-written C.
 
 ---
 
-## 🏗️ Architecture Overview
+## ⚡ One-Command Setup
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                         main.c  (Entry)                          │
-├────────────────────────────┬─────────────────────────────────────┤
-│   Auth Layer               │   UI Layer                          │
-│   auth.c / session.c       │   ui_browse, ui_booking,            │
-│   SHA-256 · Roles          │   ui_cancel, ui_account,            │
-│   SessionContext*          │   ui_admin, ui_dashboard            │
-├────────────────────────────┴─────────────────────────────────────┤
-│                    Business Logic Layer (C)                      │
-│   pricing.c · refund.c · payment.c · promos.c · location.c       │
-├──────────────────────────────────────────────────────────────────┤
-│              C++ OOP Layer  (reports.cpp)                        │
-│   Report ABC → OccupancyReport / RevenueReport / BookingReport   │
-│   TMDBClient  (libcurl + cJSON)  · TMDBException                 │
-├──────────────────────────────────────────────────────────────────┤
-│                   RDBMS Engine Layer (C)                         │
-│   query.c  ←→  schema.c  ·  storage.c  ·  index.c  ·  txn.c      │
-│   record.c (serialize / deserialize)                             │
-├──────────────────────────────────────────────────────────────────┤
-│                        Data Layer                                │
-│   *.db (binary pages)  ·  *.idx  ·  schema.cat  ·  wal.log       │
-└───────────────────────────────────────────────────────────────────┘
+The fastest way to get CineBook running is the platform launcher script — it installs missing dependencies, builds, seeds the database, and drops you straight into the app.
+
+### Windows (MSYS2 required)
+
+> **First:** Install [MSYS2](https://www.msys2.org/), then open **MSYS2 MinGW 64-bit** terminal.
+
+```bash
+git clone https://github.com/R1sh1m/CineBook.git
+cd CineBook
+bash run.sh
 ```
 
-The system runs as a **single process** — no threads, no external database. All "real-time" feel is achieved through careful state management and lazy evaluation.
+Or from CMD / PowerShell:
+
+```batch
+git clone https://github.com/R1sh1m/CineBook.git
+cd CineBook
+run.bat
+```
+
+### macOS
+
+```bash
+git clone https://github.com/R1sh1m/CineBook.git
+cd CineBook
+bash run.sh
+```
+
+### Linux (Ubuntu / Debian / Fedora)
+
+```bash
+git clone https://github.com/R1sh1m/CineBook.git
+cd CineBook
+bash run.sh
+```
+
+The script will automatically install `libcurl` if missing, build the project, seed the database on first run, and launch CineBook.
+
+---
+
+## 🛠️ Manual Setup
+
+If you prefer to control each step yourself:
+
+### Step 1 — Install Prerequisites
+
+<details>
+<summary><strong>Windows (MSYS2 MinGW 64-bit terminal)</strong></summary>
+
+```bash
+pacman -S --needed \
+  mingw-w64-x86_64-gcc \
+  mingw-w64-x86_64-curl-openssl \
+  make git
+```
+
+</details>
+
+<details>
+<summary><strong>macOS</strong></summary>
+
+```bash
+# Install Homebrew if you don't have it
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+brew install gcc curl
+```
+
+</details>
+
+<details>
+<summary><strong>Ubuntu / Debian</strong></summary>
+
+```bash
+sudo apt update
+sudo apt install -y build-essential libcurl4-openssl-dev git
+```
+
+</details>
+
+<details>
+<summary><strong>Fedora / RHEL</strong></summary>
+
+```bash
+sudo dnf install -y gcc gcc-c++ make libcurl-devel git
+```
+
+</details>
+
+---
+
+### Step 2 — Build
+
+```bash
+make
+```
+
+This compiles all `.c` files with `gcc -Wall -std=c11` and `reports.cpp` with `g++ -Wall -std=c++17`, then links with `g++`.
+
+### Step 3 — Seed the Database
+
+Run this **once** before your first launch. It creates the binary `.db` and `.idx` files in `data/`.
+
+```bash
+gcc -std=c11 -Wall -O2 -o seed tools/seed.c
+./seed
+```
+
+This generates:
+- 10 cities across India
+- 17 theatres, 38 screens (~6,010 seats)
+- 8 seeded movies with cast
+- 114 shows across all screens
+- 7 promo codes and 20 academic domains
+
+### Step 4 — Run
+
+```bash
+make run
+# or
+./cinebook
+```
+
+---
+
+## 🎬 Demo Accounts
+
+| Name | Phone | Password | Role |
+|---|---|---|---|
+| Admin CineBook | `9000000001` | `admin123` | 🔑 Admin |
+| Arjun Sharma | `9876543210` | `pass1234` | 👤 User |
+| Priya Nair | `9845123456` | `pass1234` | 🎓 Student |
+| Rahul Mehta | `9123456789` | `cinema99` | 👤 User |
+| Sneha Patel | `9988776655` | `student1` | 🎓 Student |
+| Karthik Rajan | `9090909090` | `pass1234` | 👤 User |
+| Meera Krishnan | `8877665544` | `student1` | 🎓 Student |
+
+Students automatically get a **12% seat discount**. Accounts with an academic email domain (`.ac.in`, `.edu`) are detected at sign-up and promoted.
+
+---
+
+## 🔑 TMDB API Key (Optional)
+
+CineBook works out of the box with the seeded dataset. To enable **live movie imports** from The Movie Database:
+
+1. Create a free account at [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api)
+2. Generate a **v3 API key**
+3. Open `Cinebook.conf` and replace the key:
+
+```ini
+TMDB_API_KEY=your_api_key_here
+DEFAULT_CITY=Chennai
+BASE_CURRENCY=INR
+BASE_CURRENCY_SYM=Rs
+```
+
+4. Log in as Admin → **Movie Management** → **SUPER IMPORT** to pull all currently-showing titles (India region), or use **Import from TMDB** to search by title.
+
+Without a key, you can still add movies manually via Admin → Movie Management → Add Movie Manually.
+
+---
+
+## 🗺️ User Flow
+
+```
+Sign Up / Login
+│
+├── Browse Movies      — filter by genre, language, city
+│       └── View Detail   — synopsis, full cast, streaming platforms
+│               └── Select Show   — city-filtered, future only
+│                       └── Interactive Seat Map   — ANSI grid
+│                               └── Price Breakdown   — 12-slot itemised receipt
+│                                       └── Apply Promo Code   (optional)
+│                                               └── Pay
+│                                                   ├── Wallet (instant)
+│                                                   ├── UPI   (VPA validation)
+│                                                   ├── Card  (Luhn check + expiry)
+│                                                   └── Net Banking (10 banks)
+│                                                           └── ✓ Booking Confirmed
+│
+├── My Upcoming Bookings
+├── My Past Bookings
+├── Cancel a Booking   — tiered refund (100% / 75% / 50% / 0%)
+├── Add Funds to Wallet
+├── View Notifications — waitlist alerts when seats free up
+└── Account Settings   — change city, password, add email / student upgrade
+```
+
+### Admin Flow
+
+```
+Admin Login
+│
+├── Movie Management   — TMDB import, Super Import (bulk now-playing), manual add
+├── Theatre Management — add/edit theatres, deactivate seats
+├── Screen Management  — create screens with layout (2D / IMAX / 4DX)
+├── Show Management    — schedule shows, conflict detection, bulk cancel with refund
+├── Promo Management   — create/deactivate promo codes (% or flat, role-masked)
+├── Analytics Dashboard
+│       ├── Occupancy Report   — fill rate per show, ANSI bar chart
+│       ├── Revenue Report     — by movie and by theatre
+│       └── Booking Trends     — by hour-of-day and day-of-week
+│               └── Export to CSV  →  exports/dashboard_YYYYMMDD_HHMMSS.csv
+└── System Management  — cities, academic domains, refund policy tiers
+```
+
+---
+
+## 🏗️ Architecture
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  ① Entry        main.c  ·  Cinebook.conf                    │
+├──────────────────────────────────────────────────────────────┤
+│  ② Bootstrap    schema.c  ·  storage.c  ·  txn.c  ·  index.c │
+├──────────────────────────────────────────────────────────────┤
+│  ③ Auth         auth.c  ·  session.c                        │
+│                 SHA-256 (pure C)  ·  SessionContext*         │
+├──────────────────────────────────────────────────────────────┤
+│  ④ UI Layer     ui_browse  ·  ui_booking  ·  ui_cancel       │
+│                 ui_account  ·  ui_admin  ·  ui_dashboard     │
+├──────────────────────────────────────────────────────────────┤
+│  ⑤ Business     pricing.c  ·  refund.c  ·  payment.c        │
+│     Logic       promos.c  ·  location.c                      │
+├──────────────────────────────────────────────────────────────┤
+│  ⑥ C++ OOP      reports.cpp  (abstract Report base class)    │
+│                 OccupancyReport  ·  RevenueReport            │
+│                 BookingReport  ·  TMDBClient                  │
+│                 ← extern "C" boundary via reports.h →        │
+├──────────────────────────────────────────────────────────────┤
+│  ⑦ RDBMS        query.c  ←→  schema.c  ·  storage.c         │
+│     Engine      index.c  ·  txn.c  ·  record.c              │
+├──────────────────────────────────────────────────────────────┤
+│  ⑧ Data         *.db (binary pages)  ·  *.idx  ·  wal.log   │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Key design rules:**
+- `SessionContext*` is passed by pointer to every function — no global state
+- `query.c` is the single gateway to all DB operations — nothing bypasses it
+- The C/C++ boundary is **only** through `reports.h` with `extern "C"` guards
+- Every write is WAL-logged before touching a page — crash recovery on startup
+
+---
+
+## 🔬 Technical Highlights
+
+### Custom RDBMS Engine
+
+| Component | Detail |
+|-----------|--------|
+| Page size | 4,096 bytes (8-byte header + 4,088 bytes data) |
+| Buffer pool | 64-page LRU cache — dirty pages flushed on eviction |
+| WAL | Full before/after page images, XOR checksum, auto-recovery at boot |
+| Hash index | Open-address table — O(1) PK / email lookup |
+| Sorted index | Binary search sorted array — O(log n) range queries |
+| Record layout | Fixed byte-offset per `schema.cat`; NULL sentinels per type |
+| Tables | 18 tables: users, movies, shows, seats, bookings, payments, refunds, promos… |
+
+### Pricing Engine
+
+Prices are computed fresh at every seat-hold from 12 slots:
+
+```
+base_price
+  → + screen_surcharge   (IMAX +₹80–130, 4DX +₹200)
+  → × seat_type_mult     (Standard ×1.0, Premium ×1.5, Recliner ×2.2)
+  → subtotal_per_seat
+  → − student_discount   (12% for verified academic accounts)
+  → − group_discount     (8% for 6+ seats)
+  → − promo_discount     (flat or %)
+  → + dynamic_surge      (weekend +10%, peak hours 18:00–23:00 +15%, occupancy >70% +20%)
+  → taxable_amount × seat_count
+  → + GST 18%
+  → + convenience_fee    (₹30 × seats)
+  ══ grand_total
+```
+
+### C++ OOP Layer
+
+- `Report` abstract base → `OccupancyReport`, `RevenueReport`, `BookingReport`
+- `TMDBClient` encapsulates all HTTP calls (libcurl); throws `TMDBException : std::runtime_error`
+- STL: `std::vector`, `std::map`, `std::sort`, `std::unique_ptr`
+- Wrappers expose `run_report()`, `tmdb_search_and_import()`, `tmdb_bulk_import_now_playing()` to C callers
 
 ---
 
@@ -88,163 +332,47 @@ The system runs as a **single process** — no threads, no external database. Al
 
 ```
 CineBook/
-├── main.c                  # Entry point, bootstrap, auth loop
-├── Makefile                # Cross-platform (Linux / macOS / MSYS2)
-├── Cinebook.conf           # Runtime config (TMDB key, default city, currency)
-├── cinebook_dev.sh         # Developer helper (build / seed / run / test)
+├── main.c                   # Entry point — bootstrap, auth loop, role routing
+├── Makefile                 # Cross-platform (Linux / macOS / MSYS2 Windows)
+├── Cinebook.conf            # Runtime config (TMDB key, default city, currency)
+├── run.sh                   # Auto-setup script (Linux / macOS / MSYS2)
+├── run.bat                  # Auto-setup script (Windows CMD / PowerShell)
+├── cinebook_dev.sh          # Developer helper (build / seed / run / test menu)
 ├── lib/
-│   ├── cJSON.c / .h        # Lightweight JSON parser
+│   ├── cJSON.c / .h         # Lightweight JSON parser (Dave Gamble, MIT)
 ├── src/
-│   ├── engine/             # Custom RDBMS (storage, record, schema, index, txn, query)
-│   ├── auth/               # Authentication & session management
-│   ├── logic/              # Business rules (pricing, refund, payment, promos, location)
-│   ├── reports/            # C++ OOP layer (reports + TMDB client)
-│   └── ui/                 # All terminal UI modules
+│   ├── engine/
+│   │   ├── storage.c / .h   # 4 KB page I/O, LRU buffer pool
+│   │   ├── schema.c / .h    # schema.cat parser, in-memory catalogue
+│   │   ├── record.c / .h    # Binary serialize / deserialize, ResultSet
+│   │   ├── index.c / .h     # Hash + sorted in-memory indexes
+│   │   ├── txn.c / .h       # Write-ahead log, crash recovery
+│   │   └── query.c / .h     # Public RDBMS API (SELECT/INSERT/UPDATE/DELETE/JOIN)
+│   ├── auth/
+│   │   ├── auth.c / .h      # Login, signup, SHA-256, domain detection
+│   │   └── session.c / .h   # SessionContext lifecycle
+│   ├── logic/
+│   │   ├── pricing.c / .h   # 12-slot price breakdown engine
+│   │   ├── refund.c / .h    # Tiered refund + atomic cancellation
+│   │   ├── payment.c / .h   # Wallet, UPI, Card, Net Banking simulation
+│   │   ├── promos.c / .h    # Promo validation and application
+│   │   └── location.c / .h  # City picker, theatre lookup, currency resolution
+│   ├── reports/
+│   │   ├── reports.cpp      # C++ OOP analytics + TMDB client
+│   │   └── reports.h        # C-compatible extern "C" interface
+│   └── ui/
+│       ├── ui_browse.c      # Movie browsing, show listing
+│       ├── ui_booking.c     # Interactive seat map, payment flow
+│       ├── ui_cancel.c      # Cancellation UI, refund preview
+│       ├── ui_account.c     # Account settings, student upgrade
+│       ├── ui_admin.c       # Full admin panel
+│       └── ui_dashboard.c   # Analytics dashboard, CSV export
 ├── tools/
-│   └── seed.c              # Database seeder (17 theatres, 38 screens, 7 cities)
+│   └── seed.c               # One-shot database seeder
 └── data/
-    ├── schema.cat          # Master table definitions
-    ├── db/                 # Binary page files (.db)
-    └── idx/                # Index files (.idx)
-```
-
----
-
-## ⚡ Quick Start
-
-### Prerequisites
-
-| Tool | Version | Notes |
-|------|---------|-------|
-| `gcc` | ≥ 9.0 | For all `.c` files (C11) |
-| `g++` | ≥ 9.0 | For `reports.cpp` (C++17) + linker |
-| `libcurl` | ≥ 7.x | For TMDB API calls |
-| `make` | Any | Build system |
-
----
-
-### 🐧 Linux (Ubuntu / Debian)
-
-```bash
-# 1. Install dependencies
-sudo apt update
-sudo apt install -y build-essential libcurl4-openssl-dev git
-
-# 2. Clone the repo
-git clone https://github.com/R1sh1m/CineBook.git
-cd cinebook
-
-# 3. Build
-make
-
-# 4. Seed the database (run once)
-gcc -std=c11 -Wall -O2 -o seed tools/seed.c
-./seed
-
-# 5. Run
-make run
-```
-
----
-
-### 🍎 macOS
-
-```bash
-# 1. Install dependencies (Homebrew)
-brew install gcc curl
-
-# 2. Clone
-git clone https://github.com/R1sh1m/CineBook.git
-cd cinebook
-
-# 3. Build + Seed + Run
-make
-gcc -std=c11 -Wall -O2 -o seed tools/seed.c && ./seed
-make run
-```
-
----
-
-### 🪟 Windows (MSYS2 / MinGW64)
-
-```bash
-# 1. Install MSYS2 from https://www.msys2.org/
-# 2. Open "MSYS2 MinGW 64-bit" terminal
-
-pacman -S mingw-w64-x86_64-gcc \
-          mingw-w64-x86_64-curl-openssl \
-          make git
-
-# 3. Clone & build
-git clone https://github.com/R1sh1m/CineBook.git
-cd cinebook
-make
-
-# 4. Seed
-gcc -std=c11 -Wall -O2 -o seed tools/seed.c && ./seed
-
-# 5. Run
-make run
-```
-
-> **Tip:** Use the developer helper script for a guided experience:
-> ```bash
-> bash cinebook_dev.sh
-> ```
-> Choose **F** (Fresh Start) on first run — it builds, seeds, and launches automatically.
-
----
-
-### 🔑 TMDB API Key (Optional but Recommended)
-
-CineBook works out of the box with the seeded dataset. To enable **live movie imports**:
-
-1. Create a free account at [themoviedb.org](https://www.themoviedb.org/settings/api)
-2. Generate an API key (v3 auth)
-3. Open `Cinebook.conf` and replace the key:
-
-```ini
-TMDB_API_KEY=your_api_key_here
-```
-
-4. In the Admin Panel → Movie Management → **SUPER IMPORT** to pull all currently-showing titles (India), or search by name.
-
----
-
-## 🚀 Usage Guide
-
-### Default Credentials (Seeded)
-
-| Role | Phone | Password |
-|------|-------|----------|
-| 🔑 **Admin** | `9000000001` | `admin123` |
-| 👤 **User** | `9876543210` | `pass1234` |
-| 🎓 **Student** | `9845123456` | `pass1234` |
-
-### User Flow
-
-```
-Login / Sign Up
-    └─▶  Browse Movies (genre / language filter)
-              └─▶  View Details (cast, synopsis, streaming platforms)
-                        └─▶  Select Show (city-filtered)
-                                  └─▶  Interactive Seat Map
-                                            └─▶  Price Breakdown (12-slot)
-                                                      └─▶  Apply Promo Code
-                                                                └─▶  Pay (Wallet / UPI / Card / Net Banking)
-                                                                          └─▶  Booking Confirmed ✓
-```
-
-### Admin Flow
-
-```
-Admin Login
-    ├─▶  Movie Management   — TMDB import / manual add / Super Import
-    ├─▶  Theatre Management — Add/edit theatres, screens, seats
-    ├─▶  Show Management    — Schedule shows, set prices, cancel with bulk refund
-    ├─▶  Promo Management   — Create/deactivate promo codes
-    ├─▶  Analytics          — Occupancy / Revenue / Booking Trends reports
-    └─▶  System             — Manage cities, academic domains, refund policy tiers
+    ├── schema.cat           # Master table definitions
+    ├── db/                  # Binary page files (*.db) — generated by seed
+    └── idx/                 # Index files (*.idx) — generated by seed
 ```
 
 ---
@@ -252,84 +380,88 @@ Admin Login
 ## 🛠️ Build Targets
 
 ```bash
-make          # Build the binary
-make run      # Build + create runtime dirs + run
-make clean    # Remove build artifacts
-make list     # Show all source files that will be compiled
+make              # Build the binary
+make run          # Build + ensure runtime dirs + run
+make clean        # Remove all build artifacts
+make list         # Print all source files that will be compiled
+```
+
+For the interactive developer menu (build / fresh-start / reseed / smoke-test):
+
+```bash
+bash cinebook_dev.sh
 ```
 
 ---
 
-## 📦 Seeded Dataset
+## 🎟️ Promo Codes (Seeded)
 
-The seeder (`tools/seed.c`) generates a production-like dataset:
-
-| Entity | Count |
-|--------|-------|
-| Cities | 10 (Chennai, Mumbai, Delhi, Bengaluru, Hyderabad, Kolkata, Pune…) |
-| Theatres | 17 |
-| Screens | 38 (2D / IMAX 2D / IMAX 3D / 4DX) |
-| Seats | ~6,010 |
-| Shows | 114 (3 per screen, configurable date) |
-| Movies | 8 (Kalki 2898-AD, Stree 2, Pushpa 2, Devara…) |
-| Promo Codes | 7 (WELCOME10, STUDENT50, GROUP15, HOLI100…) |
-| Academic Domains | 20 (IIT, BITS, VIT, NIT…) |
+| Code | Type | Value | Eligible Roles | Min Seats | Expiry |
+|------|------|-------|----------------|-----------|--------|
+| `WELCOME10` | % | 10% off (cap ₹100) | All | 1 | 2026-12-31 |
+| `STUDENT50` | Flat | ₹50 off | Students only | 1 | 2026-12-31 |
+| `GROUP15` | % | 15% off (cap ₹300) | All | 4 | 2026-12-31 |
+| `WEEKEND75` | Flat | ₹75 off | User, Admin | 1 | 2026-06-30 |
+| `ADMIN25` | % | 25% off | Admin only | 1 | 2026-12-31 |
+| `HOLI100` | Flat | ₹100 off | All | 2 | 2026-03-15 |
+| `NEWUSER20` | % | 20% off (cap ₹200) | All | 1 | 2026-12-31 |
 
 ---
 
-##  Technical Details
+## 🔧 Troubleshooting
 
-### Custom RDBMS
-- **Page size:** 4096 bytes — 8-byte header + 4088 bytes data
-- **Buffer pool:** 64-page LRU cache — dirty pages flushed on eviction
-- **WAL:** Full page before/after images, XOR checksum, crash recovery on startup
-- **Indexes:** Open-address hash table (O(1) PK lookup) + sorted array (O(log n) range)
-- **Serialization:** Fixed-offset binary layout per `schema.cat`; NULL sentinels per type
+**"cinebook: command not found" after `make run`**  
+Make sure you're in the project root directory where `Makefile` lives.
 
-### C++ OOP Layer
-- `Report` abstract base class → `OccupancyReport`, `RevenueReport`, `BookingReport`
-- `TMDBClient` encapsulates all HTTP calls (libcurl); `TMDBException : std::runtime_error`
-- STL: `std::vector`, `std::map`, `std::sort`, `std::unique_ptr`
-- C-callable wrappers with `extern "C"` guards keep the boundary clean
+**Blank screen or garbled characters on Windows**  
+Run inside **Windows Terminal** or the **MSYS2 MinGW 64-bit** terminal — these support ANSI escape codes. Avoid the legacy `cmd.exe` window.
 
-### Pricing Engine
-Dynamic 12-slot breakdown computed fresh at every hold:
-```
-base_price → screen_surcharge → seat_type_mult → subtotal_per_seat
-→ student_discount → group_discount → promo_discount → dynamic_surge
-→ taxable_amount → GST(18%) → convenience_fee → grand_total
-```
+**`libcurl` not found during build**  
+On Ubuntu/Debian: `sudo apt install libcurl4-openssl-dev`  
+On MSYS2: `pacman -S mingw-w64-x86_64-curl-openssl`  
+On macOS: `brew install curl`
+
+**"No movies found" after launch**  
+You need to seed the database first: `gcc -std=c11 -Wall -O2 -o seed tools/seed.c && ./seed`  
+Or use `bash run.sh` which does this automatically.
+
+**TMDB import fails / "SSL pre-check failed"**  
+This is usually a certificate issue on Windows. Run `pacman -S mingw-w64-x86_64-curl-openssl` in MSYS2 to ensure you have the OpenSSL-backed curl build. A working internet connection is required for TMDB features.
+
+**Crash on startup / WAL recovery message**  
+This is normal after an unclean shutdown. The WAL engine will roll back any uncommitted transactions and resume safely.
 
 ---
 
-##  Contributing
+## 🤝 Contributing
 
-1. Fork the repo
-2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Commit your changes: `git commit -m "feat: add my feature"`
-4. Push to the branch: `git push origin feature/my-feature`
-5. Open a Pull Request
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feat/your-feature`
+3. Keep all `.c` files in **C11** — no C++ in `.c` files
+4. C++ additions go **only** in `src/reports/reports.cpp`
+5. Commit with a conventional prefix: `feat:`, `fix:`, `docs:`, `refactor:`
+6. Open a Pull Request
 
-Please keep `.c` files in C11 and only add C++ to `reports.cpp`.
+Please make sure `make` succeeds with zero warnings before submitting.
 
 ---
 
 ## 📄 License
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+This project is licensed under the **MIT License** — see [LICENSE](LICENSE) for details.
 
 ---
 
-##  Acknowledgements
+## 🙏 Acknowledgements
 
-- [The Movie Database (TMDB)](https://www.themoviedb.org/) for the free movie API
-- [cJSON](https://github.com/DaveGamble/cJSON) by Dave Gamble — lightweight JSON parser
+- [TMDB](https://www.themoviedb.org/) — free movie metadata API
+- [cJSON](https://github.com/DaveGamble/cJSON) by Dave Gamble — MIT-licensed JSON parser
 - [libcurl](https://curl.se/libcurl/) — HTTP client library
 
 ---
 
 <div align="center">
 
- Structured & Object-Oriented Programming Project
+Built for **BACSE104 — Structured & Object-Oriented Programming**
 
 </div>
