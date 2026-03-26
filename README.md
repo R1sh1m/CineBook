@@ -27,7 +27,7 @@
 
 ## What is CineBook?
 
-CineBook is a fully functional, terminal-based cinema booking system built as a BACSE104 course project.
+CineBook is a fully functional, terminal-based cinema booking system.
 It simulates a real-world booking platform with:
 
 - **Live movie data** pulled from [TMDB](https://www.themoviedb.org/) via libcurl
@@ -35,7 +35,7 @@ It simulates a real-world booking platform with:
 - A **C++ OOP analytics layer** with abstract report classes, polymorphic dispatch, and STL containers
 - A rich **ANSI terminal UI** — interactive seat maps, price breakdowns, booking receipts
 
-No SQLite. No PostgreSQL. No Python. Every byte on disk is managed by hand-written C.
+No SQLite. No PostgreSQL. No Python. Every byte on disk is managed by the C program files.
 
 ---
 
@@ -166,7 +166,7 @@ make run
 
 ---
 
-## 🎬 Demo Accounts
+##  Demo Accounts
 
 | Name | Phone | Password | Role |
 |---|---|---|---|
