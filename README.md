@@ -462,6 +462,6 @@ This project is licensed under the **MIT License** — see [LICENSE](LICENSE) fo
 
 <div align="center">
 
-Built for **BACSE104 — Structured & Object-Oriented Programming**
+ **A Structured & Object-Oriented Programming** project
 
 </div>
