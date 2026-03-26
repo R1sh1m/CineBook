@@ -26,7 +26,7 @@
 
 ---
 
-## 🌟 What is CineBook?
+##  What is CineBook?
 
 CineBook is a **fully functional, terminal-based cinema booking system**. It simulates a real-world booking platform with live movie data pulled from [The Movie Database (TMDB)](https://www.themoviedb.org/), backed by a **custom RDBMS engine** with page storage, write-ahead logging (WAL), and in-memory hash/sorted indexes.
 
@@ -34,7 +34,7 @@ No SQLite. No Python. No third-party database. Every byte on disk is managed by 
 
 ---
 
-## ✨ Feature Highlights
+##  Feature Highlights
 
 | Category | Features |
 |----------|----------|
@@ -64,18 +64,18 @@ No SQLite. No Python. No third-party database. Every byte on disk is managed by 
 │   SHA-256 · Roles          │   ui_cancel, ui_account,            │
 │   SessionContext*          │   ui_admin, ui_dashboard            │
 ├────────────────────────────┴─────────────────────────────────────┤
-│                    Business Logic Layer (C)                       │
+│                    Business Logic Layer (C)                      │
 │   pricing.c · refund.c · payment.c · promos.c · location.c       │
-├───────────────────────────────────────────────────────────────────┤
-│              C++ OOP Layer  (reports.cpp)                         │
+├──────────────────────────────────────────────────────────────────┤
+│              C++ OOP Layer  (reports.cpp)                        │
 │   Report ABC → OccupancyReport / RevenueReport / BookingReport   │
 │   TMDBClient  (libcurl + cJSON)  · TMDBException                 │
-├───────────────────────────────────────────────────────────────────┤
-│                   RDBMS Engine Layer (C)                          │
-│   query.c  ←→  schema.c  ·  storage.c  ·  index.c  ·  txn.c    │
-│   record.c (serialize / deserialize)                              │
-├───────────────────────────────────────────────────────────────────┤
-│                        Data Layer                                 │
+├──────────────────────────────────────────────────────────────────┤
+│                   RDBMS Engine Layer (C)                         │
+│   query.c  ←→  schema.c  ·  storage.c  ·  index.c  ·  txn.c      │
+│   record.c (serialize / deserialize)                             │
+├──────────────────────────────────────────────────────────────────┤
+│                        Data Layer                                │
 │   *.db (binary pages)  ·  *.idx  ·  schema.cat  ·  wal.log       │
 └───────────────────────────────────────────────────────────────────┘
 ```
@@ -131,7 +131,7 @@ sudo apt update
 sudo apt install -y build-essential libcurl4-openssl-dev git
 
 # 2. Clone the repo
-git clone https://github.com/YOUR_USERNAME/cinebook.git
+git clone https://github.com/R1sh1m/CineBook.git
 cd cinebook
 
 # 3. Build
@@ -154,7 +154,7 @@ make run
 brew install gcc curl
 
 # 2. Clone
-git clone https://github.com/YOUR_USERNAME/cinebook.git
+git clone https://github.com/R1sh1m/CineBook.git
 cd cinebook
 
 # 3. Build + Seed + Run
@@ -176,7 +176,7 @@ pacman -S mingw-w64-x86_64-gcc \
           make git
 
 # 3. Clone & build
-git clone https://github.com/YOUR_USERNAME/cinebook.git
+git clone https://github.com/R1sh1m/CineBook.git
 cd cinebook
 make
 
@@ -277,7 +277,7 @@ The seeder (`tools/seed.c`) generates a production-like dataset:
 
 ---
 
-## 🔬 Technical Deep-Dive
+##  Technical Details
 
 ### Custom RDBMS
 - **Page size:** 4096 bytes — 8-byte header + 4088 bytes data
@@ -302,7 +302,7 @@ base_price → screen_surcharge → seat_type_mult → subtotal_per_seat
 
 ---
 
-## 🤝 Contributing
+##  Contributing
 
 1. Fork the repo
 2. Create a feature branch: `git checkout -b feature/my-feature`
@@ -320,7 +320,7 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 
 ---
 
-## 🙏 Acknowledgements
+##  Acknowledgements
 
 - [The Movie Database (TMDB)](https://www.themoviedb.org/) for the free movie API
 - [cJSON](https://github.com/DaveGamble/cJSON) by Dave Gamble — lightweight JSON parser
@@ -330,6 +330,6 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 
 <div align="center">
 
-Made with ♥ for BACSE104 — Structured & Object-Oriented Programming
+ Structured & Object-Oriented Programming Project
 
 </div>
