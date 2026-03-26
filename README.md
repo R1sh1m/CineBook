@@ -286,7 +286,7 @@ Admin Login
 
 ---
 
-## 🔬 Technical Highlights
+##  Technical Highlights
 
 ### Custom RDBMS Engine
 
@@ -377,7 +377,7 @@ CineBook/
 
 ---
 
-## 🛠️ Build Targets
+##  Build Targets
 
 ```bash
 make              # Build the binary
@@ -433,7 +433,7 @@ This is normal after an unclean shutdown. The WAL engine will roll back any unco
 
 ---
 
-## 🤝 Contributing
+##  Contributing
 
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feat/your-feature`
@@ -452,7 +452,7 @@ This project is licensed under the **MIT License** — see [LICENSE](LICENSE) fo
 
 ---
 
-## 🙏 Acknowledgements
+##  Acknowledgements
 
 - [TMDB](https://www.themoviedb.org/) — free movie metadata API
 - [cJSON](https://github.com/DaveGamble/cJSON) by Dave Gamble — MIT-licensed JSON parser
