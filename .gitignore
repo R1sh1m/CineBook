@@ -1,0 +1,16 @@
+build/
+*.o
+cinebook.exe
+cinebook
+seed.exe
+seed
+data/db/*.db
+data/idx/*.idx
+data/wal.log
+exports/
+*.dll
+smoke_test_output.txt
+
+# local secrets/config
+Cinebook.conf
+cinebook.conf

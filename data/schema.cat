@@ -1,0 +1,335 @@
+# =============================================================================
+# schema.cat  —  CineBook Master Schema Catalogue
+# =============================================================================
+# Parsed ONCE at startup by schema.c → populate global Schema array.
+# record.c uses byte offsets directly for serialise/deserialise.
+# DO NOT reorder columns without regenerating all .db and .idx files.
+#
+# Line syntax — column definition:
+#   <col_name>  <TYPE>  <size_bytes>  <is_pk>  <is_fk>  <is_not_null>  <byte_offset>
+#
+# Block syntax:
+#   TABLE <name>  record_size <N>
+#   ... column lines ...
+#   END_TABLE
+#
+# Comments:  lines beginning with '#' are ignored by the parser.
+# Blank lines are ignored.
+#
+# ─── TYPE tokens ─────────────────────────────────────────────────────────────
+#   INT    4 bytes  signed 32-bit little-endian
+#   FLOAT  4 bytes  IEEE-754 single-precision little-endian
+#   CHAR   n bytes  NUL-padded fixed-width  (size field gives n)
+#   DATE  20 bytes  ASCII "YYYY-MM-DD HH:MM\0" + 3 padding bytes
+#                   Date-only fields store time as "00:00"
+#
+# ─── NULL encoding ───────────────────────────────────────────────────────────
+#   INT   nullable → sentinel value  0x80000000  (-2147483648) = NULL
+#   FLOAT nullable → all-bits-set    0xFFFFFFFF  (quiet NaN)   = NULL
+#   CHAR  nullable → first byte == 0x00                        = NULL
+#   DATE  nullable → first byte == 0x00                        = NULL
+#
+# ─── Flags ───────────────────────────────────────────────────────────────────
+#   is_pk       1 = primary key   (auto-increment managed by query.c)
+#   is_fk       1 = foreign key   (referential integrity enforced by query.c)
+#   is_not_null 1 = NOT NULL      (constraint enforced on insert/update)
+# =============================================================================
+
+
+# =============================================================================
+# 1. users
+#    record_size = 4+100+15+150+65+4+4+4+4+20+4 = 374 bytes
+# =============================================================================
+TABLE users  record_size 374
+#col_name              TYPE   size  pk  fk  nn   offset
+user_id                INT    4     1   0   1    0
+name                   CHAR   100   0   0   1    4
+phone                  CHAR   15    0   0   1    104
+email                  CHAR   150   0   0   0    119
+password_hash          CHAR   65    0   0   1    269
+role                   INT    4     0   0   1    334
+wallet_balance         FLOAT  4     0   0   1    338
+preferred_city_id      INT    4     0   1   1    342
+country_id             INT    4     0   1   1    346
+created_at             DATE   20    0   0   1    350
+is_active              INT    4     0   0   1    370
+END_TABLE
+
+
+# =============================================================================
+# 2. movies
+#    record_size = 4+4+200+500+100+50+4+20+10+4 = 896 bytes
+# =============================================================================
+TABLE movies  record_size 896
+#col_name              TYPE   size  pk  fk  nn   offset
+movie_id               INT    4     1   0   1    0
+tmdb_id                INT    4     0   0   0    4
+title                  CHAR   200   0   0   1    8
+synopsis               CHAR   500   0   0   0    208
+genre                  CHAR   100   0   0   0    708
+language               CHAR   50    0   0   0    808
+duration_min           INT    4     0   0   1    858
+release_date           DATE   20    0   0   0    862
+rating                 CHAR   10    0   0   0    882
+is_active              INT    4     0   0   1    892
+END_TABLE
+
+
+# =============================================================================
+# 3. cast_members
+#    record_size = 4+4+150+150+4 = 312 bytes
+# =============================================================================
+TABLE cast_members  record_size 312
+#col_name              TYPE   size  pk  fk  nn   offset
+cast_id                INT    4     1   0   1    0
+movie_id               INT    4     0   1   1    4
+person_name            CHAR   150   0   0   1    8
+role_name              CHAR   150   0   0   0    158
+is_lead                INT    4     0   0   1    308
+END_TABLE
+
+
+# =============================================================================
+# 4. theatres
+#    record_size = 4+150+4+300+4 = 462 bytes
+# =============================================================================
+TABLE theatres  record_size 462
+#col_name              TYPE   size  pk  fk  nn   offset
+theatre_id             INT    4     1   0   1    0
+name                   CHAR   150   0   0   1    4
+city_id                INT    4     0   1   1    154
+address                CHAR   300   0   0   0    158
+is_active              INT    4     0   0   1    458
+END_TABLE
+
+
+# =============================================================================
+# 5. screens
+#    record_size = 4+4+50+4+4+4+4+4+4+4 = 86 bytes
+# =============================================================================
+TABLE screens  record_size 86
+#col_name              TYPE   size  pk  fk  nn   offset
+screen_id              INT    4     1   0   1    0
+theatre_id             INT    4     0   1   1    4
+screen_name            CHAR   50    0   0   1    8
+screen_type            INT    4     0   0   1    58
+total_seats            INT    4     0   0   1    62
+layout_rows            INT    4     0   0   1    66
+layout_cols            INT    4     0   0   1    70
+recliner_rows_end      INT    4     0   0   1    74
+premium_rows_end       INT    4     0   0   1    78
+is_active              INT    4     0   0   1    82
+END_TABLE
+
+
+# =============================================================================
+# 6. seats
+#    record_size = 4+4+3+4+4+4 = 23 bytes
+# =============================================================================
+TABLE seats  record_size 23
+#col_name              TYPE   size  pk  fk  nn   offset
+seat_id                INT    4     1   0   1    0
+screen_id              INT    4     0   1   1    4
+row_label              CHAR   3     0   0   1    8
+seat_number            INT    4     0   0   1    11
+seat_type              INT    4     0   0   1    15
+is_active              INT    4     0   0   1    19
+END_TABLE
+
+
+# =============================================================================
+# 7. shows
+#    record_size = 4+4+4+20+4+4 = 40 bytes
+# =============================================================================
+TABLE shows  record_size 40
+#col_name              TYPE   size  pk  fk  nn   offset
+show_id                INT    4     1   0   1    0
+movie_id               INT    4     0   1   1    4
+screen_id              INT    4     0   1   1    8
+show_datetime          DATE   20    0   0   1    12
+base_price             FLOAT  4     0   0   1    32
+is_active              INT    4     0   0   1    36
+END_TABLE
+
+
+# =============================================================================
+# 8. seat_status   (HOT TABLE — one row per seat per show)
+#    record_size = 4+4+4+4+4+20+4 = 44 bytes
+# =============================================================================
+TABLE seat_status  record_size 44
+#col_name              TYPE   size  pk  fk  nn   offset
+status_id              INT    4     1   0   1    0
+show_id                INT    4     0   1   1    4
+seat_id                INT    4     0   1   1    8
+status                 INT    4     0   0   1    12
+held_by_user_id        INT    4     0   1   0    16
+held_until             DATE   20    0   0   0    20
+booking_id             INT    4     0   1   0    40
+END_TABLE
+
+
+# =============================================================================
+# 9. bookings
+#    record_size = 4+4+4+4+4+4+4+4+4+4+4+4+20+20 = 88 bytes
+# =============================================================================
+TABLE bookings  record_size 88
+#col_name              TYPE   size  pk  fk  nn   offset
+booking_id             INT    4     1   0   1    0
+user_id                INT    4     0   1   1    4
+show_id                INT    4     0   1   1    8
+seat_count             INT    4     0   0   1    12
+subtotal               FLOAT  4     0   0   1    16
+gst_amount             FLOAT  4     0   0   1    20
+convenience_fee        FLOAT  4     0   0   1    24
+discount_amount        FLOAT  4     0   0   1    28
+total_amount           FLOAT  4     0   0   1    32
+promo_id               INT    4     0   1   0    36
+payment_id             INT    4     0   1   1    40
+status                 INT    4     0   0   1    44
+booked_at              DATE   20    0   0   1    48
+cancelled_at           DATE   20    0   0   0    68
+END_TABLE
+
+
+# =============================================================================
+# 10. booking_seats
+#     record_size = 4+4+4+4 = 16 bytes
+# =============================================================================
+TABLE booking_seats  record_size 16
+#col_name              TYPE   size  pk  fk  nn   offset
+bs_id                  INT    4     1   0   1    0
+booking_id             INT    4     0   1   1    4
+seat_id                INT    4     0   1   1    8
+seat_price             FLOAT  4     0   0   1    12
+END_TABLE
+
+
+# =============================================================================
+# 11. payments
+#     record_size = 4+4+4+4+4+100+20+20 = 160 bytes
+# =============================================================================
+TABLE payments  record_size 160
+#col_name              TYPE   size  pk  fk  nn   offset
+payment_id             INT    4     1   0   1    0
+booking_id             INT    4     0   1   1    4
+method                 INT    4     0   0   1    8
+amount                 FLOAT  4     0   0   1    12
+status                 INT    4     0   0   1    16
+method_detail          CHAR   100   0   0   0    20
+initiated_at           DATE   20    0   0   1    120
+completed_at           DATE   20    0   0   0    140
+END_TABLE
+
+
+# =============================================================================
+# 12. refunds
+#     record_size = 4+4+4+4+4+4+4+4+200+20 = 252 bytes
+# =============================================================================
+TABLE refunds  record_size 252
+#col_name                   TYPE   size  pk  fk  nn   offset
+refund_id                   INT    4     1   0   1    0
+booking_id                  INT    4     0   1   1    4
+payment_id                  INT    4     0   1   1    8
+gross_paid                  FLOAT  4     0   0   1    12
+convenience_fee_deducted    FLOAT  4     0   0   1    16
+refund_percentage           INT    4     0   0   1    20
+refund_amount               FLOAT  4     0   0   1    24
+refund_type                 INT    4     0   0   1    28
+reason                      CHAR   200   0   0   0    32
+processed_at                DATE   20    0   0   1    232
+END_TABLE
+
+
+# =============================================================================
+# 13. promos
+#     record_size = 4+20+4+4+4+4+4+20+20+4+4+4 = 96 bytes
+# =============================================================================
+TABLE promos  record_size 96
+#col_name              TYPE   size  pk  fk  nn   offset
+promo_id               INT    4     1   0   1    0
+code                   CHAR   20    0   0   1    4
+discount_type          INT    4     0   0   1    24
+discount_value         FLOAT  4     0   0   1    28
+max_discount_cap       FLOAT  4     0   0   0    32
+min_seats              INT    4     0   0   1    36
+role_mask              INT    4     0   0   1    40
+valid_from             DATE   20    0   0   1    44
+valid_until            DATE   20    0   0   1    64
+max_uses               INT    4     0   0   0    84
+current_uses           INT    4     0   0   1    88
+is_active              INT    4     0   0   1    92
+END_TABLE
+
+
+# =============================================================================
+# 14. waitlist
+#     record_size = 4+4+4+4+20+4+20 = 60 bytes
+# =============================================================================
+TABLE waitlist  record_size 60
+#col_name                   TYPE   size  pk  fk  nn   offset
+waitlist_id                 INT    4     1   0   1    0
+user_id                     INT    4     0   1   1    4
+show_id                     INT    4     0   1   1    8
+seat_count_requested        INT    4     0   0   1    12
+added_at                    DATE   20    0   0   1    16
+status                      INT    4     0   0   1    36
+notified_at                 DATE   20    0   0   0    40
+END_TABLE
+
+
+# =============================================================================
+# 15. countries
+#     record_size = 4+100+4+4 = 112 bytes
+# =============================================================================
+TABLE countries  record_size 112
+#col_name              TYPE   size  pk  fk  nn   offset
+country_id             INT    4     1   0   1    0
+name                   CHAR   100   0   0   1    4
+currency_sym           CHAR   4     0   0   1    104
+currency_code          CHAR   4     0   0   1    108
+END_TABLE
+
+
+# =============================================================================
+# 16. cities
+#     record_size = 4+100+4 = 108 bytes
+# =============================================================================
+TABLE cities  record_size 108
+#col_name              TYPE   size  pk  fk  nn   offset
+city_id                INT    4     1   0   1    0
+name                   CHAR   100   0   0   1    4
+country_id             INT    4     0   1   1    104
+END_TABLE
+
+
+# =============================================================================
+# 17. academic_domains
+#     record_size = 4+100 = 104 bytes
+# =============================================================================
+TABLE academic_domains  record_size 104
+#col_name              TYPE   size  pk  fk  nn   offset
+domain_id              INT    4     1   0   1    0
+domain                 CHAR   100   0   0   1    4
+END_TABLE
+
+
+# =============================================================================
+# 18. refund_policy
+#     record_size = 4+4+4+50 = 62 bytes
+# =============================================================================
+TABLE refund_policy  record_size 62
+#col_name              TYPE   size  pk  fk  nn   offset
+policy_id              INT    4     1   0   1    0
+hours_before           INT    4     0   0   1    4
+refund_percent         INT    4     0   0   1    8
+label                  CHAR   50    0   0   1    12
+END_TABLE
+
+
+# =============================================================================
+# END OF SCHEMA CATALOGUE
+# Tables (18): users  movies  cast_members  theatres  screens  seats
+#              shows  seat_status  bookings  booking_seats  payments
+#              refunds  promos  waitlist  countries  cities
+#              academic_domains  refund_policy
+# =============================================================================
