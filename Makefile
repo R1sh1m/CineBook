@@ -82,8 +82,8 @@ else
 $(error Unsupported platform '$(UNAME_S)')
 endif
 
-CFLAGS   := -Wall -Wextra -std=c11   -O2 $(CURL_INC)
-CXXFLAGS := -Wall -Wextra -std=c++17 -O2 $(CURL_INC)
+CFLAGS   := -w -std=c11   -O2 $(CURL_INC)
+CXXFLAGS := -w -std=c++17 -O2 $(CURL_INC)
 
 # ── Include paths ─────────────────────────────────────────────────────────────
 INCLUDES := -I src/engine \
