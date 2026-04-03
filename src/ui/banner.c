@@ -19,7 +19,7 @@ void show_banner(void)
         "  ╚██████╗██║██║ ╚████║███████╗██████╔╝╚██████╔╝╚██████╔╝██║  ██╗",
         "   ╚═════╝╚═╝╚═╝  ╚═══╝╚══════╝╚═════╝  ╚═════╝  ╚═════╝ ╚═╝  ╚═╝",
         "",
-        "  Terminal Cinema Booking System  |  BACSE104"
+        "  Terminal Cinema Booking System "
     };
     int num_lines = (int)(sizeof(banner_lines) / sizeof(banner_lines[0]));
 
