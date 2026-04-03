@@ -1,16 +1,38 @@
+# Build artifacts
 build/
 *.o
-cinebook.exe
+*.obj
+*.a
+*.so
+*.dll
+*.dylib
+*.exe
 cinebook
-seed.exe
 seed
+
+# Runtime generated database/index files
 data/db/*.db
 data/idx/*.idx
 data/wal.log
 exports/
-*.dll
-smoke_test_output.txt
 
-# local secrets/config
-Cinebook.conf
+# Logs and temporary outputs
+*.log
+smoke_test_output.txt
+make_exit.txt
+test_run.log
+build_make.log
+gcc_main_all.log
+gcc_main_err.log
+gcc_verbose.log
+integrity_repairs.log
+
+# Local secrets/config (never commit)
+.api_key
+api_key.txt
+.setup_complete
 cinebook.conf
+Cinebook.conf
+
+# Local runtime/internal state
+.storage_config

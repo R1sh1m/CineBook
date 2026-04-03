@@ -32,6 +32,18 @@ typedef struct {
  * Public API
  * ───────────────────────────────────────────────────────────────────────────*/
 
+typedef struct {
+    uint32_t entries_scanned;
+    uint32_t committed_entries;
+    uint32_t uncommitted_entries;
+    uint32_t rolled_back_entries;
+    uint32_t restore_failures;
+    uint32_t checksum_mismatches;
+    uint32_t wal_rewritten;
+    uint32_t legacy_header_detected;
+    uint32_t next_txn_id;
+} WALRecoverySummary;
+
 /* Open wal.log, run crash recovery on uncommitted entries, set g_current_txn_id. */
 void txn_init(void);
 
@@ -64,5 +76,8 @@ void wal_commit_nested(void);
 /* Restore before_images for all uncommitted entries of the current txn,
  * then prune those entries from wal.log. */
 void wal_rollback(void);
+
+/* Snapshot of the most recent txn_init() WAL recovery pass. */
+WALRecoverySummary wal_get_last_recovery_summary(void);
 
 #endif /* TXN_H */

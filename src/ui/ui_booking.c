@@ -26,6 +26,8 @@
 #include "payment.h"    /* process_payment, PaymentMethod, PAY_STATUS_*     */
 #include "promos.h"     /* validate_promo, apply_promo, increment_promo_uses */
 #include "txn.h"        /* wal_begin, wal_commit, wal_rollback               */
+#include "ui_utils.h"   /* draw_separator, draw_section_break                */
+#include "storage.h"    /* storage_flush_all                                 */
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Compile-time limits
@@ -1347,6 +1349,32 @@ void run_booking_flow(int show_id, SessionContext *ctx)
 
     ctx->active_payment_id = 0;
 
+    /* ── PRE-PAYMENT VERIFICATION: Re-check all seats still held by current user ─ */
+    /* CRITICAL FIX: Verify seats haven't been released/stolen between selection and payment */
+    int status_held_check = 1;
+    for (int i = 0; i < seat_count; i++) {
+        WhereClause ss_verify[4];
+        strncpy(ss_verify[0].col_name, "show_id", 63); ss_verify[0].col_name[63] = '\0';
+        ss_verify[0].op = OP_EQ; ss_verify[0].value = &show_id; ss_verify[0].logic = 0;
+        strncpy(ss_verify[1].col_name, "seat_id", 63); ss_verify[1].col_name[63] = '\0';
+        ss_verify[1].op = OP_EQ; ss_verify[1].value = &seat_ids[i]; ss_verify[1].logic = 0;
+        strncpy(ss_verify[2].col_name, "status", 63); ss_verify[2].col_name[63] = '\0';
+        ss_verify[2].op = OP_EQ; ss_verify[2].value = &status_held_check; ss_verify[2].logic = 0;
+        strncpy(ss_verify[3].col_name, "held_by_user_id", 63); ss_verify[3].col_name[63] = '\0';
+        ss_verify[3].op = OP_EQ; ss_verify[3].value = &ctx->user_id; ss_verify[3].logic = 0;
+        
+        ResultSet *rs_verify = db_select("seat_status", ss_verify, 4, NULL, 0);
+        int still_held = (rs_verify && rs_verify->row_count > 0);
+        if (rs_verify) result_set_free(rs_verify);
+        
+        if (!still_held) {
+            release_holds(seat_ids, seat_count, show_id);
+            printf("\n  " ANSI_RED "ERROR: One or more seats were released or taken by another user." ANSI_RESET "\n");
+            printf("  Your selection has been cleared. Please try booking again.\n\n");
+            return;
+        }
+    }
+
     /* ── Process payment ────────────────────────────────────────────────── */
     int pay_result = PAY_STATUS_FAILED;
     while (1) {
@@ -1438,6 +1466,8 @@ void run_booking_flow(int show_id, SessionContext *ctx)
             break;
         }
 
+        /* CRITICAL FIX: Atomic update with full guard check including booking_id
+         * This prevents race conditions where seat could be reassigned between checks */
         WhereClause ss_wc_guard[4];
         strncpy(ss_wc_guard[0].col_name, "show_id", 63); ss_wc_guard[0].col_name[63] = '\0';
         ss_wc_guard[0].op = OP_EQ; ss_wc_guard[0].value = &show_id; ss_wc_guard[0].logic = 0;
@@ -1448,28 +1478,36 @@ void run_booking_flow(int show_id, SessionContext *ctx)
         strncpy(ss_wc_guard[3].col_name, "held_by_user_id", 63); ss_wc_guard[3].col_name[63] = '\0';
         ss_wc_guard[3].op = OP_EQ; ss_wc_guard[3].value = &ctx->user_id; ss_wc_guard[3].logic = 0;
 
+        /* First update: status HELD->CONFIRMED with full guard */
         if (db_update("seat_status", ss_wc_guard, 4, "status", &status_ss_conf) <= 0) {
             confirm_ok = 0;
             break;
         }
 
-        WhereClause ss_wc_final[2];
+        /* Second update: set booking_id (now safe because status is already CONFIRMED) */
+        WhereClause ss_wc_final[3];
         strncpy(ss_wc_final[0].col_name, "show_id", 63); ss_wc_final[0].col_name[63] = '\0';
         ss_wc_final[0].op = OP_EQ; ss_wc_final[0].value = &show_id; ss_wc_final[0].logic = 0;
         strncpy(ss_wc_final[1].col_name, "seat_id", 63); ss_wc_final[1].col_name[63] = '\0';
         ss_wc_final[1].op = OP_EQ; ss_wc_final[1].value = &seat_ids[i]; ss_wc_final[1].logic = 0;
+        strncpy(ss_wc_final[2].col_name, "status", 63); ss_wc_final[2].col_name[63] = '\0';
+        ss_wc_final[2].op = OP_EQ; ss_wc_final[2].value = &status_ss_conf; ss_wc_final[2].logic = 0;
 
-        db_update("seat_status", ss_wc_final, 2, "booking_id", &new_bk_id);
+        db_update("seat_status", ss_wc_final, 3, "booking_id", &new_bk_id);
     }
 
     if (!confirm_ok) {
         wal_rollback();
         printf("\n  \033[31mSeat confirmation failed due to concurrent update.\033[0m\n");
-        printf("  Booking was not finalized.\n\n");
+        printf("  Booking was not finalized. Please try again.\n\n");
         return;
     }
 
     wal_commit();
+    
+    /* CRITICAL FIX: Flush all dirty pages to disk immediately after booking confirmation
+     * to ensure seat_status changes are persisted before user logout */
+    storage_flush_all();
 
     if (promo_id_used > 0)
         increment_promo_uses(promo_id_used);

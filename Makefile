@@ -19,6 +19,9 @@
 # All object files land in build/
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ── Version ───────────────────────────────────────────────────────────────────
+VERSION := 1.5.0
+
 # ── OS detection ──────────────────────────────────────────────────────────────
 UNAME_S := $(shell uname -s 2>/dev/null || echo Windows)
 
@@ -36,7 +39,7 @@ CURL_INC_PATH := $(MSYS2_MINGW64)/include
 CURL_LIB_PATH := $(MSYS2_MINGW64)/lib
 CURL_INC      := -I$(CURL_INC_PATH)
 CURL_LIB      := -L$(CURL_LIB_PATH)
-LIBS          := $(CURL_LIB) -lcurl
+LIBS          := $(CURL_LIB) -lcurl -lcrypto -liphlpapi -lws2_32
 TARGET        := cinebook.exe
 
 else ifeq ($(UNAME_S),Darwin)
@@ -57,7 +60,7 @@ CURL_LIB_PATH := $(CURL_PREFIX)/lib
 endif
 CURL_INC      := -I$(CURL_INC_PATH)
 CURL_LIB      := -L$(CURL_LIB_PATH)
-LIBS          := $(CURL_LIB) -lcurl
+LIBS          := $(CURL_LIB) -lcurl -lcrypto
 TARGET        := cinebook
 
 else ifeq ($(UNAME_S),Linux)
@@ -72,15 +75,15 @@ CURL_INC_PATH :=
 CURL_LIB_PATH :=
 CURL_INC      :=
 CURL_LIB      :=
-LIBS          := -lcurl
+LIBS          := -lcurl -lcrypto
 TARGET        := cinebook
 
 else
 $(error Unsupported platform '$(UNAME_S)')
 endif
 
-CFLAGS   := -Wall -Wextra -std=c11   -g $(CURL_INC)
-CXXFLAGS := -Wall -Wextra -std=c++17 -g $(CURL_INC)
+CFLAGS   := -Wall -Wextra -std=c11   -O2 $(CURL_INC)
+CXXFLAGS := -Wall -Wextra -std=c++17 -O2 $(CURL_INC)
 
 # ── Include paths ─────────────────────────────────────────────────────────────
 INCLUDES := -I src/engine \
@@ -88,6 +91,8 @@ INCLUDES := -I src/engine \
             -I src/logic  \
             -I src/ui     \
             -I src/reports \
+            -I src/crypto \
+            -I src/setup  \
             -I lib
 
 # ── Source files ─────────────────────────────────────────────────────────────
@@ -98,6 +103,8 @@ C_SRCS := main.c \
           src/engine/index.c   \
           src/engine/txn.c     \
           src/engine/query.c   \
+          src/engine/integrity.c \
+          src/engine/compact.c \
           src/auth/auth.c      \
           src/auth/session.c   \
           src/logic/pricing.c  \
@@ -111,6 +118,11 @@ C_SRCS := main.c \
           src/ui/ui_account.c  \
           src/ui/ui_admin.c    \
           src/ui/ui_dashboard.c \
+          src/ui/ui_utils.c    \
+          src/ui/messages.c    \
+          src/ui/banner.c      \
+          src/crypto/keystore.c \
+          src/setup/wizard.c   \
           lib/cJSON.c
 
 CPP_SRCS := src/reports/reports.cpp
@@ -124,6 +136,7 @@ ALL_OBJS := $(C_OBJS) $(CPP_OBJS)
 # Default target
 # ─────────────────────────────────────────────────────────────────────────────
 .PHONY: all dirs run clean list check-deps install-deps-mac install-deps-linux
+.PHONY: install test clean-db debug package help
 all: dirs $(TARGET)
 
 dirs:
@@ -133,6 +146,8 @@ dirs:
 	$(MKDIR_P) build/src/logic
 	$(MKDIR_P) build/src/ui
 	$(MKDIR_P) build/src/reports
+	$(MKDIR_P) build/src/crypto
+	$(MKDIR_P) build/src/setup
 	$(MKDIR_P) build/lib
 	$(MKDIR_P) data/db
 	$(MKDIR_P) data/idx
@@ -157,38 +172,119 @@ build/%.o: %.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Dependency checks
+# Dependency checks — Verify all required tools and libraries
 # ─────────────────────────────────────────────────────────────────────────────
 check-deps:
+	@echo ""
+	@echo "  Checking dependencies for $(UNAME_S)..."
+	@echo "  ────────────────────────────────────────"
+	@echo ""
 ifeq ($(UNAME_S),Darwin)
-	@if ! command -v brew >/dev/null 2>&1; then \
-		echo "Missing Homebrew. Install from https://brew.sh"; \
-		exit 1; \
+	@printf "  gcc      : "
+	@if command -v gcc >/dev/null 2>&1; then \
+		echo "✓ $$(gcc --version | head -n1)"; \
+	else \
+		echo "✗ NOT FOUND"; exit 1; \
 	fi
-	@if [ ! -f "$(CURL_LIB_PATH)/libcurl.dylib" ] && [ ! -f "/usr/lib/libcurl.dylib" ]; then \
-		echo "libcurl not found. Run: make install-deps-mac"; \
-		exit 1; \
+	@printf "  g++      : "
+	@if command -v g++ >/dev/null 2>&1; then \
+		echo "✓ $$(g++ --version | head -n1)"; \
+	else \
+		echo "✗ NOT FOUND"; exit 1; \
 	fi
-	@echo "Dependencies OK (macOS)."
+	@printf "  libcurl  : "
+	@if [ -f "$(CURL_LIB_PATH)/libcurl.dylib" ] || [ -f "/usr/lib/libcurl.dylib" ]; then \
+		CURL_VER=$$(curl-config --version 2>/dev/null | cut -d' ' -f2 || echo "unknown"); \
+		echo "✓ $$CURL_VER"; \
+	else \
+		echo "✗ NOT FOUND — Run: make install-deps-mac"; exit 1; \
+	fi
+	@printf "  ruby     : "
+	@if command -v ruby >/dev/null 2>&1; then \
+		echo "✓ $$(ruby --version | cut -d' ' -f2)"; \
+	else \
+		echo "⚠ NOT FOUND (optional for lolcat)"; \
+	fi
+	@printf "  lolcat   : "
+	@if command -v lolcat >/dev/null 2>&1; then \
+		echo "✓ installed"; \
+	else \
+		echo "⚠ NOT FOUND (optional rainbow text)"; \
+	fi
+	@printf "  brew     : "
+	@if command -v brew >/dev/null 2>&1; then \
+		echo "✓ installed"; \
+	else \
+		echo "✗ NOT FOUND — Required for macOS"; exit 1; \
+	fi
 else ifeq ($(UNAME_S),Linux)
-	@if ! ldconfig -p 2>/dev/null | grep -q libcurl && ! pkg-config --exists libcurl 2>/dev/null; then \
-		echo "libcurl not found. Install with apt or dnf."; \
-		echo "Run: make install-deps-linux"; \
-		exit 1; \
+	@printf "  gcc      : "
+	@if command -v gcc >/dev/null 2>&1; then \
+		echo "✓ $$(gcc --version | head -n1)"; \
+	else \
+		echo "✗ NOT FOUND"; exit 1; \
 	fi
-	@echo "Dependencies OK (Linux)."
+	@printf "  g++      : "
+	@if command -v g++ >/dev/null 2>&1; then \
+		echo "✓ $$(g++ --version | head -n1)"; \
+	else \
+		echo "✗ NOT FOUND"; exit 1; \
+	fi
+	@printf "  libcurl  : "
+	@if ldconfig -p 2>/dev/null | grep -q libcurl || pkg-config --exists libcurl 2>/dev/null; then \
+		CURL_VER=$$(curl-config --version 2>/dev/null | cut -d' ' -f2 || echo "installed"); \
+		echo "✓ $$CURL_VER"; \
+	else \
+		echo "✗ NOT FOUND — Run: make install-deps-linux"; exit 1; \
+	fi
+	@printf "  openssl  : "
+	@if command -v openssl >/dev/null 2>&1; then \
+		SSL_VER=$$(openssl version | cut -d' ' -f2); \
+		echo "✓ $$SSL_VER"; \
+	else \
+		echo "⚠ NOT FOUND (recommended)"; \
+	fi
+	@printf "  ruby     : "
+	@if command -v ruby >/dev/null 2>&1; then \
+		echo "✓ $$(ruby --version | cut -d' ' -f2)"; \
+	else \
+		echo "⚠ NOT FOUND (optional for lolcat)"; \
+	fi
+	@printf "  lolcat   : "
+	@if command -v lolcat >/dev/null 2>&1; then \
+		echo "✓ installed"; \
+	else \
+		echo "⚠ NOT FOUND (optional rainbow text)"; \
+	fi
 else
-	@if [ ! -x "$(CC)" ]; then \
-		echo "MSYS2 MinGW gcc not found at $(CC)."; \
-		echo "Install MSYS2 and MinGW-w64 toolchain."; \
-		exit 1; \
+	@printf "  gcc      : "
+	@if [ -x "$(CC)" ]; then \
+		echo "✓ $$($(CC) --version | head -n1)"; \
+	else \
+		echo "✗ NOT FOUND at $(CC)"; exit 1; \
 	fi
-	@if [ ! -f "$(CURL_LIB_PATH)/libcurl.a" ] && [ ! -f "$(CURL_LIB_PATH)/libcurl.dll.a" ]; then \
-		echo "libcurl not found in $(CURL_LIB_PATH)."; \
-		exit 1; \
+	@printf "  g++      : "
+	@if [ -x "$(CXX)" ]; then \
+		echo "✓ $$($(CXX) --version | head -n1)"; \
+	else \
+		echo "✗ NOT FOUND at $(CXX)"; exit 1; \
 	fi
-	@echo "Dependencies OK (Windows/MSYS2)."
+	@printf "  libcurl  : "
+	@if [ -f "$(CURL_LIB_PATH)/libcurl.a" ] || [ -f "$(CURL_LIB_PATH)/libcurl.dll.a" ]; then \
+		echo "✓ found in $(CURL_LIB_PATH)"; \
+	else \
+		echo "✗ NOT FOUND in $(CURL_LIB_PATH)"; exit 1; \
+	fi
+	@printf "  MSYS2    : "
+	@if [ -d "C:/msys64" ]; then \
+		echo "✓ C:/msys64"; \
+	else \
+		echo "✗ NOT FOUND"; exit 1; \
+	fi
 endif
+	@echo ""
+	@echo "  ✓ All required dependencies present"
+	@echo ""
 
 install-deps-mac:
 	@brew install curl
@@ -227,3 +323,112 @@ list:
 	@echo ""
 	@echo "C++ sources ($(words $(CPP_SRCS))):"
 	@for s in $(CPP_SRCS); do echo "  $$s"; done
+
+# ─────────────────────────────────────────────────────────────────────────────
+# install — Install binary to system path
+# ─────────────────────────────────────────────────────────────────────────────
+install: $(TARGET)
+ifeq ($(UNAME_S),Darwin)
+	@echo "Installing to /usr/local/bin/cinebook..."
+	@install -m 755 $(TARGET) /usr/local/bin/cinebook
+	@echo "  ✓ Installed: /usr/local/bin/cinebook"
+else ifeq ($(UNAME_S),Linux)
+	@echo "Installing to /usr/local/bin/cinebook..."
+	@sudo install -m 755 $(TARGET) /usr/local/bin/cinebook
+	@echo "  ✓ Installed: /usr/local/bin/cinebook"
+else
+	@echo "  ⚠ Install target not supported on Windows."
+	@echo "  Add $(TARGET) to your PATH manually."
+endif
+
+# ─────────────────────────────────────────────────────────────────────────────
+# test — Run integrity tests
+# ─────────────────────────────────────────────────────────────────────────────
+test: $(TARGET)
+	@echo ""
+	@echo "  Running integrity tests..."
+	@echo ""
+	@if [ -f test_storage_monitoring.c ]; then \
+		echo "  Compiling test_storage_monitoring..."; \
+		$(CC) $(CFLAGS) $(INCLUDES) -o test_storage_monitoring test_storage_monitoring.c \
+			src/engine/storage.c src/engine/record.c src/engine/schema.c \
+			src/engine/index.c src/engine/txn.c lib/cJSON.c $(LIBS) && \
+		echo "  Running test_storage_monitoring..." && \
+		./test_storage_monitoring && \
+		echo "" && \
+		echo "  ✓ All tests passed."; \
+	else \
+		echo "  ℹ No test files found. Skipping."; \
+	fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# clean-db — Reset database (remove all .db and .idx files)
+# ─────────────────────────────────────────────────────────────────────────────
+clean-db:
+	@echo "  Resetting database..."
+	@$(RM_F) data/db/*.db data/idx/*.idx data/wal.log 2>/dev/null || true
+	@echo "  ✓ Database reset. Run 'make run' to reseed."
+
+# ─────────────────────────────────────────────────────────────────────────────
+# debug — Build with debug symbols and no optimization
+# ─────────────────────────────────────────────────────────────────────────────
+debug: CFLAGS := -Wall -Wextra -std=c11 -g -O0 -DDEBUG $(CURL_INC)
+debug: CXXFLAGS := -Wall -Wextra -std=c++17 -g -O0 -DDEBUG $(CURL_INC)
+debug: clean dirs $(TARGET)
+	@echo ""
+	@echo "  ✓ Debug build complete with -g -O0 -DDEBUG"
+	@echo ""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# package — Create distributable tarball with pre-seeded database
+# ─────────────────────────────────────────────────────────────────────────────
+package: $(TARGET)
+	@echo ""
+	@echo "  Creating release package..."
+	@echo ""
+	@$(MKDIR_P) package/cinebook-$(VERSION)
+	@$(MKDIR_P) package/cinebook-$(VERSION)/data/db
+	@$(MKDIR_P) package/cinebook-$(VERSION)/data/idx
+	@$(MKDIR_P) package/cinebook-$(VERSION)/exports
+	@echo "  Copying binary..."
+	@cp $(TARGET) package/cinebook-$(VERSION)/
+	@echo "  Copying schema..."
+	@cp schema.cat package/cinebook-$(VERSION)/ 2>/dev/null || true
+	@echo "  Copying README..."
+	@cp README.md package/cinebook-$(VERSION)/ 2>/dev/null || true
+	@cp LICENSE package/cinebook-$(VERSION)/ 2>/dev/null || true
+	@echo "  Seeding database..."
+	@if [ -f tools/seed.c ]; then \
+		$(CC) -std=c11 -Wall -O2 -o package/seed tools/seed.c && \
+		cd package && ./seed && rm -f seed && cd ..; \
+	fi
+	@echo "  Copying seeded data..."
+	@cp -r data/db/*.db package/cinebook-$(VERSION)/data/db/ 2>/dev/null || true
+	@echo "  Creating tarball..."
+	@cd package && tar -czf cinebook-v$(VERSION).tar.gz cinebook-$(VERSION)
+	@mv package/cinebook-v$(VERSION).tar.gz .
+	@$(RM_RF) package
+	@echo ""
+	@echo "  ✓ Package created: cinebook-v$(VERSION).tar.gz"
+	@echo ""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# help — Show available targets
+# ─────────────────────────────────────────────────────────────────────────────
+help:
+	@echo ""
+	@echo "  CineBook v$(VERSION) — Available Make Targets"
+	@echo "  ════════════════════════════════════════════════"
+	@echo ""
+	@echo "  all          Build the project (default)"
+	@echo "  run          Build and run CineBook"
+	@echo "  clean        Remove build artifacts"
+	@echo "  clean-db     Reset database (removes .db and .idx files)"
+	@echo "  debug        Build with debug symbols (-g -O0 -DDEBUG)"
+	@echo "  test         Run integrity tests"
+	@echo "  install      Install binary to /usr/local/bin"
+	@echo "  package      Create distributable tarball (v$(VERSION))"
+	@echo "  check-deps   Verify all dependencies are present"
+	@echo "  list         Show all source files"
+	@echo "  help         Show this help message"
+	@echo ""

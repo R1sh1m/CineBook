@@ -27,6 +27,7 @@ static int      restore_page(const char *table, uint32_t page_id,
                               const uint8_t *image);
 static int      wal_has_seed_magic(FILE *f);
 static int      wal_truncate_to_empty(void);
+static void     reset_recovery_summary(void);
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * Global state
@@ -35,6 +36,7 @@ static uint32_t g_current_txn_id = 0;  /* incremented on each wal_begin()    */
 static FILE    *g_wal_file        = NULL;
 static int      g_txn_active      = 0;  /* 1 if a transaction is in progress  */
 static int      g_nested_started_count = 0; /* nested begins that started txns */
+static WALRecoverySummary g_last_recovery_summary = {0};
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * compute_checksum
@@ -150,6 +152,12 @@ static int wal_truncate_to_empty(void)
     return 1;
 }
 
+static void reset_recovery_summary(void)
+{
+    memset(&g_last_recovery_summary, 0, sizeof(g_last_recovery_summary));
+    g_last_recovery_summary.next_txn_id = g_current_txn_id;
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
  * rewrite_wal_committed_only
  * Truncates wal.log to contain only the committed entries in `entries`.
@@ -203,32 +211,39 @@ static void rewrite_wal_committed_only(WALEntry *entries, int count)
  * ───────────────────────────────────────────────────────────────────────────*/
 static void recover_wal(void)
 {
+    reset_recovery_summary();
+
     /* Guard: old seeder WAL format begins with 8-byte "CWAL" header.
      * This runtime WAL parser expects raw WALEntry records only. */
     if (wal_has_seed_magic(g_wal_file)) {
+        g_last_recovery_summary.legacy_header_detected = 1;
         fprintf(stderr,
                 "[txn] recover_wal: detected legacy seed WAL header 'CWAL'; "
                 "treating WAL as empty\n");
         if (fseek(g_wal_file, 8, SEEK_SET) != 0) {
             /* Non-fatal; caller may still choose to truncate in txn_init(). */
         }
+        g_last_recovery_summary.next_txn_id = g_current_txn_id;
         return;
     }
 
     /* Seek to beginning of the already-open g_wal_file. */
     if (fseek(g_wal_file, 0, SEEK_END) != 0) {
         fprintf(stderr, "[txn] recover_wal: fseek(END) failed\n");
+        g_last_recovery_summary.next_txn_id = g_current_txn_id;
         return;
     }
     long file_size = ftell(g_wal_file);
     if (file_size <= 0) {
         /* Empty or unreadable file — clean start. */
+        g_last_recovery_summary.next_txn_id = g_current_txn_id;
         return;
     }
 
     /* Check if there are any complete entries. */
     long entry_count = file_size / (long)sizeof(WALEntry);
     if (entry_count == 0) {
+        g_last_recovery_summary.next_txn_id = g_current_txn_id;
         return;
     }
 
@@ -236,12 +251,14 @@ static void recover_wal(void)
     WALEntry *entries = (WALEntry *)malloc((size_t)entry_count * sizeof(WALEntry));
     if (!entries) {
         fprintf(stderr, "[txn] recover_wal: malloc failed\n");
+        g_last_recovery_summary.next_txn_id = g_current_txn_id;
         return;
     }
 
     if (fseek(g_wal_file, 0, SEEK_SET) != 0) {
         fprintf(stderr, "[txn] recover_wal: fseek(0) failed\n");
         free(entries);
+        g_last_recovery_summary.next_txn_id = g_current_txn_id;
         return;
     }
 
@@ -252,16 +269,20 @@ static void recover_wal(void)
         entry_count = (long)read_count;
     }
 
-    int     rolled_back    = 0;
+    g_last_recovery_summary.entries_scanned = (uint32_t)entry_count;
+
+    int      rolled_back = 0;
     uint32_t max_committed_id = 0;
 
     for (long i = 0; i < entry_count; i++) {
         WALEntry *e = &entries[i];
 
         if (e->committed == 1) {
+            g_last_recovery_summary.committed_entries++;
             /* Validate checksum on committed entries. */
             uint32_t expected = compute_checksum(e);
             if (expected != e->checksum) {
+                g_last_recovery_summary.checksum_mismatches++;
                 fprintf(stderr,
                         "[txn] recover_wal: checksum mismatch on committed entry "
                         "txn=%u table=%s page=%u (expected %08x got %08x) — skipping rollback\n",
@@ -272,27 +293,32 @@ static void recover_wal(void)
                 max_committed_id = e->txn_id;
             }
         } else {
+            g_last_recovery_summary.uncommitted_entries++;
             /* Uncommitted — restore before_image. */
             fprintf(stderr,
                     "[txn] recover_wal: rolling back uncommitted entry "
                     "txn=%u table=%s page=%u slot=%u\n",
                     e->txn_id, e->table, e->page_id, e->slot_id);
             if (!restore_page(e->table, e->page_id, e->before_image)) {
+                g_last_recovery_summary.restore_failures++;
                 fprintf(stderr,
                         "[txn] recover_wal: restore failed for txn=%u table=%s page=%u\n",
                         e->txn_id, e->table, e->page_id);
             }
             rolled_back++;
+            g_last_recovery_summary.rolled_back_entries++;
         }
     }
 
     /* Set next txn_id beyond anything we saw. */
     g_current_txn_id = max_committed_id + 1;
+    g_last_recovery_summary.next_txn_id = g_current_txn_id;
 
     if (rolled_back > 0) {
         fprintf(stderr, "[txn] recover_wal: rolled back %d entries; rewriting log\n",
                 rolled_back);
         rewrite_wal_committed_only(entries, (int)entry_count);
+        g_last_recovery_summary.wal_rewritten = 1;
     }
 
     free(entries);
@@ -324,6 +350,7 @@ void txn_init(void)
     g_txn_active      = 0;
     g_nested_started_count = 0;
     g_current_txn_id  = 1;   /* default; recover_wal may raise this */
+    reset_recovery_summary();
 
     /* Guard: seed.c may have left an 8-byte "CWAL" marker header. */
     if (wal_has_seed_magic(g_wal_file)) {
@@ -594,4 +621,9 @@ void wal_rollback(void)
     free(entries);
     g_txn_active = 0;
     g_nested_started_count = 0;
+}
+
+WALRecoverySummary wal_get_last_recovery_summary(void)
+{
+    return g_last_recovery_summary;
 }

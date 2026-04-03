@@ -891,14 +891,25 @@ class TMDBClient {
             curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  write_cb);
             curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &body);
             curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-            curl_easy_setopt(curl, CURLOPT_TIMEOUT,        20L);
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT,        30L);
             curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
             curl_easy_setopt(curl, CURLOPT_USERAGENT,      "CineBook/1.0");
             curl_easy_setopt(curl, CURLOPT_ERRORBUFFER,    errbuf);
             apply_tls_options(curl, endpoint.c_str());
 
+            if (g_tmdb_debug_mode) {
+                fprintf(stderr, "[TMDB][debug] GET %s (endpoint=%s, attempt=%d/%d)\n",
+                        url.c_str(), endpoint.c_str(), attempt, max_attempts);
+            }
+
             CURLcode rc = curl_easy_perform(curl);
             curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+
+            if (g_tmdb_debug_mode) {
+                fprintf(stderr, "[TMDB][debug] Response: curl_code=%d http_code=%ld body_size=%zu\n",
+                        (int)rc, http_code, body.size());
+            }
+
             curl_easy_cleanup(curl);
 
             if (rc != CURLE_OK) {
@@ -908,8 +919,8 @@ class TMDBClient {
                 std::string hint = "Check internet connection and retry.";
 
                 if (cat == TMDB_ERR_NETWORK_TIMEOUT) {
-                    user_msg = "TMDB timed out. Please try again.";
-                    hint = "Slow internet detected. Retry in a few seconds.";
+                    user_msg = "TMDB request timed out - check internet connection.";
+                    hint = "Slow or unstable internet detected. Retry in a few seconds.";
                 } else if (cat == TMDB_ERR_NETWORK_RESET) {
                     user_msg = "TMDB connection was reset.";
                     hint = "Transient network reset. Retry shortly.";
@@ -917,8 +928,8 @@ class TMDBClient {
                     user_msg = "Cannot resolve TMDB host.";
                     hint = "Check DNS settings, proxy, or firewall rules.";
                 } else if (cat == TMDB_ERR_TLS_CERT_FAILURE) {
-                    user_msg = "TMDB TLS certificate validation failed.";
-                    hint = "Install/update CA bundle or set TMDB_CA_BUNDLE in config.";
+                    user_msg = "SSL certificate verification failed - check system time and ca-certificates.";
+                    hint = "Install/update CA bundle, verify system clock, or set TMDB_CA_BUNDLE in config.";
                 } else if (cat == TMDB_ERR_PROXY_OR_FIREWALL_BLOCK) {
                     user_msg = "TMDB connection blocked.";
                     hint = "Check proxy/firewall/VPN restrictions.";
@@ -937,14 +948,19 @@ class TMDBClient {
             if (http_code == 401) {
                 tmdb_set_error(TMDB_ERR_HTTP_401_INVALID_KEY, endpoint, 0, 401, attempt, max_attempts,
                                "HTTP 401 Unauthorized",
-                               "Invalid TMDB API key.",
-                               "Generate a valid key at themoviedb.org and update cinebook.conf.");
+                               "Invalid TMDB API key - visit themoviedb.org to generate a new key.",
+                               "Sign in to themoviedb.org, go to Settings → API, and update cinebook.conf.");
                 throw TMDBException(g_last_tmdb_error);
             }
             if (http_code == 429) {
+                const int base_ms = 350;
+                int retry_seconds = base_ms * (1 << attempt) / 1000;
+                char retry_msg[128];
+                snprintf(retry_msg, sizeof(retry_msg),
+                         "TMDB rate limit reached. Retry in %d seconds.", retry_seconds);
                 tmdb_set_error(TMDB_ERR_HTTP_429_RATE_LIMIT, endpoint, 0, 429, attempt, max_attempts,
                                "HTTP 429 Too Many Requests",
-                               "TMDB rate limit reached.",
+                               retry_msg,
                                "Wait and retry after a short cooldown.");
                 if (attempt < max_attempts) { sleep_backoff(attempt); continue; }
                 throw TMDBException(g_last_tmdb_error);
@@ -1235,13 +1251,25 @@ int tmdb_search_and_import(const char *query, const char *api_key)
     try {
         details_json = client.movie_details(hit.tmdb_id);
         print_progress_bar("Import", 2, 5);
-        credits_json = client.credits(hit.tmdb_id);
-        print_progress_bar("Import", 3, 5);
     } catch (const TMDBException &ex) {
         printf("  [TMDB] %s\n", ex.what());
         const TMDBErrorInfo *e = tmdb_get_last_error();
         printf("  [TMDB] %s\n", (e && e->user_message[0]) ? e->user_message : "Failed to fetch movie details.");
         return -1;
+    }
+
+    try {
+        credits_json = client.credits(hit.tmdb_id);
+        print_progress_bar("Import", 3, 5);
+    } catch (const TMDBException &ex) {
+        printf("  [TMDB] Warning: Failed to fetch cast - importing movie without cast information.\n");
+        if (g_tmdb_debug_mode) {
+            const TMDBErrorInfo *e = tmdb_get_last_error();
+            printf("  [TMDB][debug] Credits fetch error: %s\n",
+                   (e && e->user_message[0]) ? e->user_message : ex.what());
+        }
+        credits_json = ""; /* Continue without cast */
+        print_progress_bar("Import", 3, 5);
     }
 
     cJSON *det = cJSON_Parse(details_json.c_str());
@@ -1330,65 +1358,56 @@ int tmdb_search_and_import(const char *query, const char *api_key)
     }
     print_progress_bar("Import", 4, 5);
 
-    cJSON *cred_root = cJSON_Parse(credits_json.c_str());
+    cJSON *cred_root = nullptr;
     int cast_inserted = 0;
-    bool cast_failed = false;
 
-    if (!cred_root) {
-        wal_rollback();
+    if (!credits_json.empty()) {
+        cred_root = cJSON_Parse(credits_json.c_str());
+    }
+
+    if (!cred_root && !credits_json.empty()) {
         tmdb_set_error(TMDB_ERR_JSON_PARSE_ERROR, "credits", 0, 0, 1, 1,
                        "cJSON_Parse failed for credits payload",
                        "Malformed TMDB credits payload.",
-                       "Retry import later.");
-        printf("  [TMDB] Malformed TMDB credits payload.\n");
-        return -1;
-    }
+                       "Movie imported without cast information.");
+        printf("  [TMDB] Warning: Malformed credits payload - importing movie without cast.\n");
+    } else if (cred_root) {
+        cJSON *cast_arr = cJSON_GetObjectItemCaseSensitive(cred_root, "cast");
+        if (cJSON_IsArray(cast_arr)) {
+            int cast_total = cJSON_GetArraySize(cast_arr);
+            if (cast_total > 15) cast_total = 15;
 
-    cJSON *cast_arr = cJSON_GetObjectItemCaseSensitive(cred_root, "cast");
-    if (cJSON_IsArray(cast_arr)) {
-        int cast_total = cJSON_GetArraySize(cast_arr);
-        if (cast_total > 15) cast_total = 15;
+            for (int ci = 0; ci < cast_total; ci++) {
+                cJSON *cm         = cJSON_GetArrayItem(cast_arr, ci);
+                std::string cname = get_str(cm, "name");
+                std::string crole = get_str(cm, "character");
+                int         order = get_int(cm, "order");
+                int         is_lead = (order < 5) ? 1 : 0;
 
-        for (int ci = 0; ci < cast_total; ci++) {
-            cJSON *cm         = cJSON_GetArrayItem(cast_arr, ci);
-            std::string cname = get_str(cm, "name");
-            std::string crole = get_str(cm, "character");
-            int         order = get_int(cm, "order");
-            int         is_lead = (order < 5) ? 1 : 0;
+                trunc(cname, 149);
+                trunc(crole, 149);
 
-            trunc(cname, 149);
-            trunc(crole, 149);
+                char cname_buf[150] = {}; strncpy(cname_buf, cname.c_str(), sizeof(cname_buf) - 1);
+                char crole_buf[150] = {}; strncpy(crole_buf, crole.c_str(), sizeof(crole_buf) - 1);
 
-            char cname_buf[150] = {}; strncpy(cname_buf, cname.c_str(), sizeof(cname_buf) - 1);
-            char crole_buf[150] = {}; strncpy(crole_buf, crole.c_str(), sizeof(crole_buf) - 1);
+                int dummy_cast_id = 0;
+                void *cast_fields[5];
+                cast_fields[0] = &dummy_cast_id;
+                cast_fields[1] = &new_movie_id;
+                cast_fields[2] = cname_buf;
+                cast_fields[3] = crole_buf;
+                cast_fields[4] = &is_lead;
 
-            int dummy_cast_id = 0;
-            void *cast_fields[5];
-            cast_fields[0] = &dummy_cast_id;
-            cast_fields[1] = &new_movie_id;
-            cast_fields[2] = cname_buf;
-            cast_fields[3] = crole_buf;
-            cast_fields[4] = &is_lead;
-
-            int rc = db_insert("cast_members", cast_fields);
-            if (rc > 0) {
-                cast_inserted++;
-            } else {
-                cast_failed = true;
-                break;
+                int rc = db_insert("cast_members", cast_fields);
+                if (rc > 0) {
+                    cast_inserted++;
+                } else {
+                    printf("  [TMDB] Warning: Failed to insert cast member #%d - continuing.\n", ci + 1);
+                    break;
+                }
             }
         }
-    }
-    cJSON_Delete(cred_root);
-
-    if (cast_failed) {
-        wal_rollback();
-        tmdb_set_error(TMDB_ERR_DB_WRITE_FAILURE, "cast_insert", 0, 0, 1, 1,
-                       "db_insert(cast_members) failed",
-                       "Failed to save cast members for imported movie.",
-                       "Check DB health and retry.");
-        printf("  [TMDB] Failed to save cast members.\n");
-        return -1;
+        cJSON_Delete(cred_root);
     }
 
     wal_commit();
@@ -1587,11 +1606,11 @@ int tmdb_bulk_import_now_playing(const char *api_key,
                 cJSON_Delete(det);
             }
         } catch (const TMDBException &ex) {
-            processed_count++;
-            printf("  [TMDB] %s\n", ex.what());
-            printf("  [%2d/%2d] %-45s — detail fetch failed, skipped\n",
-                   processed_count, total, title.c_str());
-            continue;
+            /* Non-fatal — proceed with default duration */
+            if (g_tmdb_debug_mode) {
+                printf("  [TMDB][debug] Detail fetch failed for %s: %s (using default %dmin)\n",
+                       title.c_str(), ex.what(), duration_min);
+            }
         }
 
         /* ── Fetch credits ── */
@@ -1649,12 +1668,9 @@ int tmdb_bulk_import_now_playing(const char *api_key,
 
         /* ── Insert cast members (same transaction) ── */
         int cast_inserted = 0;
-        bool cast_failed = false;
         if (!credits_json.empty()) {
             cJSON *cred_root = cJSON_Parse(credits_json.c_str());
-            if (!cred_root) {
-                cast_failed = true;
-            } else {
+            if (cred_root) {
                 cJSON *cast_arr = cJSON_GetObjectItemCaseSensitive(cred_root, "cast");
                 if (cJSON_IsArray(cast_arr)) {
                     int cast_total = cJSON_GetArraySize(cast_arr);
@@ -1687,21 +1703,12 @@ int tmdb_bulk_import_now_playing(const char *api_key,
                         if (rc > 0) {
                             cast_inserted++;
                         } else {
-                            cast_failed = true;
                             break;
                         }
                     }
                 }
                 cJSON_Delete(cred_root);
             }
-        }
-
-        if (cast_failed) {
-            wal_rollback();
-            processed_count++;
-            printf("  [%2d/%2d] %-45s — cast insert failed, rolled back\n",
-                   processed_count, total, title.c_str());
-            continue;
         }
 
         /* ── Commit this movie's transaction ── */

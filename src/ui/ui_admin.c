@@ -34,7 +34,12 @@
 #include "reports.h"  /* run_report, run_*_report, tmdb_search_and_import,
                           tmdb_bulk_import_now_playing                          */
 #include "txn.h"      /* wal_begin, wal_commit, wal_rollback                   */
-#include "storage.h"  /* storage_get_capacity                                   */
+#include "storage.h"  /* storage_get_capacity + storage stats                   */
+#include "ui_utils.h" /* smart_clear, draw_separator                            */
+#include "integrity.h"/* verify_transaction_state, repair_orphaned_records      */
+#include "compact.h"  /* compact_all_tables                                     */
+#include "keystore.h" /* decrypt_api_key                                        */
+#include "wizard.h"   /* setup_wizard_run                                       */
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * Limits
@@ -43,6 +48,7 @@
 #define CONF_PATH       "cinebook.conf"
 #define TMDB_KEY_MAX    128
 #define BOX_INNER       56
+#define MAX_COMPACT_RESULTS 64
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * Shared helpers
@@ -64,7 +70,7 @@ static void press_enter(void)
 
 static void ui_smart_clear_and_title(const char *title)
 {
-    printf("\033[2J\033[H");
+    smart_clear(UI_CONTEXT_ADMIN_PANEL);
     if (title && title[0]) {
         printf("  %s\n", title);
         printf("  ──────────────────────────────────────────────────\n");
@@ -369,6 +375,22 @@ static void row_index_to_label(int idx, char *out)
  * ───────────────────────────────────────────────────────────────────────────*/
 static int read_tmdb_key(char *out_buf, int max_len)
 {
+    if (!out_buf || max_len <= 1) return 0;
+    out_buf[0] = '\0';
+
+    char *dec = decrypt_api_key(".api_key");
+    if (dec && dec[0] != '\0') {
+        strncpy(out_buf, dec, (size_t)(max_len - 1));
+        out_buf[max_len - 1] = '\0';
+        secure_zero(dec, strlen(dec));
+        free(dec);
+        return 1;
+    }
+    if (dec) {
+        secure_zero(dec, strlen(dec));
+        free(dec);
+    }
+
     FILE *f = fopen(CONF_PATH, "r");
     if (!f) return 0;
     char line[256];
@@ -1879,6 +1901,7 @@ static void movie_management(void)
         printf("  2. Import from TMDB (search by title)\n");
         printf("  3. Add movie manually\n");
         printf("  4. SUPER IMPORT  fetch all now-playing (India)\n");
+        printf("  5. Update TMDB API key (secure wizard)\n");
         printf("  0. Back\n");
         long c = read_long("  Choice: ");
         switch (c) {
@@ -1886,6 +1909,16 @@ static void movie_management(void)
             case 2: tmdb_import();      press_enter(); break;
             case 3: manual_add_movie(); press_enter(); break;
             case 4: super_import();     press_enter(); break;
+            case 5: {
+                char refreshed[TMDB_KEY_MAX];
+                if (setup_wizard_run(1, refreshed, sizeof(refreshed))) {
+                    printf("   TMDB API key updated successfully.\n");
+                } else {
+                    printf("  [!] API key update cancelled or failed.\n");
+                }
+                press_enter();
+                break;
+            }
             case 0: return;
             default: printf("  [!] Invalid.\n"); break;
         }
@@ -2158,6 +2191,51 @@ static void list_academic_domains(void)
     result_set_free(rs);
 }
 
+static void run_integrity_tools(void)
+{
+    IntegrityReport *r = verify_transaction_state();
+    if (!r) {
+        printf("  [!] Integrity check failed.\n");
+        return;
+    }
+
+    print_integrity_report(r);
+
+    if (r->total_issues > 0) {
+        printf("  1. Dry-run repair plan\n");
+        printf("  2. Repair now (with backup)\n");
+        printf("  0. Back\n");
+        long c = read_long("  Choice: ");
+        if (c == 1) {
+            int n = repair_orphaned_records(1);
+            printf("   Dry-run complete: %d issue(s) would be repaired.\n", n);
+        } else if (c == 2) {
+            int n = repair_orphaned_records(0);
+            if (n >= 0) printf("   Repair complete: %d issue(s) repaired.\n", n);
+            else printf("  [!] Repair failed.\n");
+        }
+    }
+
+    free_integrity_report(r);
+}
+
+static void optimize_database_all_tables(void)
+{
+    CompactResult results[MAX_COMPACT_RESULTS];
+    memset(results, 0, sizeof(results));
+
+    int done = compact_all_tables(results, MAX_COMPACT_RESULTS);
+    if (done < 0) {
+        printf("  [!] Optimize failed.\n");
+        return;
+    }
+
+    printf("\n  Optimization summary (%d table(s)):\n", done);
+    for (int i = 0; i < done; i++) {
+        print_compact_result(&results[i]);
+    }
+}
+
 static void system_management(void)
 {
     while (1) {
@@ -2167,6 +2245,8 @@ static void system_management(void)
         printf("  3. List academic domains\n");
         printf("  4. View refund policy tiers\n");
         printf("  5. Edit refund policy tier\n");
+        printf("  6. Run integrity audit / repair\n");
+        printf("  7. Optimize database\n");
         printf("  0. Back\n");
         long c = read_long("  Choice: ");
         switch (c) {
@@ -2175,6 +2255,8 @@ static void system_management(void)
             case 3: list_academic_domains(); press_enter(); break;
             case 4: list_refund_policy(); press_enter(); break;
             case 5: edit_refund_policy(); press_enter(); break;
+            case 6: run_integrity_tools(); press_enter(); break;
+            case 7: optimize_database_all_tables(); press_enter(); break;
             case 0: return;
             default: printf("  [!] Invalid choice.\n"); break;
         }

@@ -30,6 +30,8 @@
 #include "session.h"  /* SessionContext                                       */
 #include "reports.h"  /* run_occupancy_report, run_revenue_report,
                          run_booking_report, run_report                      */
+#include "ui_utils.h" /* draw_separator, draw_section_break                   */
+#include "../engine/storage.h"  /* storage capacity statistics                 */
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * File-scope dashboard state
@@ -198,6 +200,41 @@ static void print_quick_stats(const SessionContext *ctx)
 
     printf("  Quick stats: %d confirmed bookings · Rs.%s revenue · %.1f%% avg occupancy\n",
            qs.confirmed_bookings, revenue_buf, qs.avg_occupancy);
+}
+
+static void print_storage_capacity_bar(void)
+{
+    StorageStats stats;
+    if (storage_get_summary(&stats) != 0) return;
+
+    int pct = calculate_capacity_percentage();
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+
+    const int bar_w = 30;
+    int fill = (pct * bar_w) / 100;
+    const char *color = "\033[32m";
+    if (pct >= 82) color = "\033[31m";
+    else if (pct >= 70) color = "\033[33m";
+
+    double used_mb = (double)stats.bytes_used / (1024.0 * 1024.0);
+    double total_mb = (double)stats.bytes_total / (1024.0 * 1024.0);
+
+    printf("  Storage: %s[", color);
+    for (int i = 0; i < bar_w; i++) {
+        if (i < fill) printf("█");
+        else printf("░");
+    }
+    printf("]\033[0m %d%%\n", pct);
+
+    printf("           %.1fMB / %.1fMB  | tables: %d",
+           used_mb, total_mb, stats.table_count);
+
+    if (stats.fragmentation_ratio > 0.30f) {
+        printf("  | \033[33mfragmentation: %.1f%%\033[0m",
+               stats.fragmentation_ratio * 100.0f);
+    }
+    printf("\n");
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -508,6 +545,7 @@ void dashboard_menu(SessionContext *ctx)
     while (1) {
         print_dashboard_header(ctx);
         print_quick_stats(ctx);
+        print_storage_capacity_bar();
 
         long c = read_long("  Choice: ");
 

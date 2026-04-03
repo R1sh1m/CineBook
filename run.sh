@@ -13,6 +13,18 @@ ok()   { echo -e "${GRN}${BLD}  ✓ $*${RST}"; }
 warn() { echo -e "${YLW}${BLD}  ! $*${RST}"; }
 die()  { echo -e "${RED}${BLD}  ✗ $*${RST}"; exit 1; }
 
+resolve_make_cmd() {
+    if command -v make &>/dev/null; then
+        echo "make"
+        return 0
+    fi
+    if command -v mingw32-make &>/dev/null; then
+        echo "mingw32-make"
+        return 0
+    fi
+    return 1
+}
+
 echo
 echo -e "${CYN}${BLD}  CineBook — Auto Setup & Launch${RST}"
 echo "  ────────────────────────────────────"
@@ -40,6 +52,21 @@ case "$PLATFORM" in
             sudo dnf install -y -q libcurl-devel 2>/dev/null || \
             warn "Could not install libcurl automatically. Please run: sudo apt install libcurl4-openssl-dev"
         fi
+        # Install Ruby + lolcat for colorful banner
+        if ! command -v lolcat &>/dev/null; then
+            if ! command -v ruby &>/dev/null; then
+                warn "Ruby not found — installing for lolcat support..."
+                sudo apt-get install -y -qq ruby-full 2>/dev/null || \
+                sudo dnf install -y -q ruby 2>/dev/null || \
+                warn "Could not install Ruby. lolcat will be unavailable."
+            fi
+            if command -v ruby &>/dev/null && ! command -v lolcat &>/dev/null; then
+                warn "Installing lolcat for rainbow banner..."
+                gem install lolcat --user-install 2>/dev/null || \
+                sudo gem install lolcat 2>/dev/null || \
+                warn "Could not install lolcat. Using fallback colors."
+            fi
+        fi
         ;;
     macos)
         if ! command -v brew &>/dev/null; then
@@ -49,11 +76,36 @@ case "$PLATFORM" in
             warn "curl not found via Homebrew — installing..."
             brew install curl
         fi
+        # Install lolcat for colorful banner
+        if ! command -v lolcat &>/dev/null; then
+            if ! command -v ruby &>/dev/null; then
+                warn "Ruby not found — installing for lolcat support..."
+                brew install ruby
+            fi
+            if command -v ruby &>/dev/null; then
+                warn "Installing lolcat for rainbow banner..."
+                gem install lolcat --user-install 2>/dev/null || \
+                brew install lolcat 2>/dev/null || \
+                warn "Could not install lolcat. Using fallback colors."
+            fi
+        fi
         ;;
     msys2)
         if ! command -v gcc &>/dev/null; then
             warn "gcc not found — installing MinGW toolchain..."
             pacman -S --needed --noconfirm mingw-w64-x86_64-gcc mingw-w64-x86_64-curl-openssl make
+        fi
+        # Install Ruby + lolcat for colorful banner
+        if ! command -v lolcat &>/dev/null; then
+            if ! command -v ruby &>/dev/null; then
+                warn "Ruby not found — installing for lolcat support..."
+                pacman -S --needed --noconfirm ruby
+            fi
+            if command -v ruby &>/dev/null; then
+                warn "Installing lolcat for rainbow banner..."
+                gem install lolcat --user-install 2>/dev/null || \
+                warn "Could not install lolcat. Using fallback colors."
+            fi
         fi
         ;;
 esac
@@ -66,13 +118,17 @@ ok "Runtime directories ready"
 # ── 4. Build ────────────────────────────────────────────────────────────────
 echo
 echo -e "${CYN}  Building CineBook...${RST}"
-if ! make -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)"; then
+MAKE_CMD="$(resolve_make_cmd)" || die "No 'make' tool found. Install build tools (Linux: sudo apt install build-essential)."
+if ! "$MAKE_CMD" -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)"; then
     die "Build failed. Check errors above."
 fi
 ok "Build complete"
 
 # ── 5. Seed database (only if empty) ───────────────────────────────────────
-DB_COUNT=$(ls data/db/*.db 2>/dev/null | wc -l || echo 0)
+shopt -s nullglob
+db_files=(data/db/*.db)
+shopt -u nullglob
+DB_COUNT=${#db_files[@]}
 if (( DB_COUNT == 0 )); then
     echo
     echo -e "${CYN}  Seeding database (first run)...${RST}"

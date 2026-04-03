@@ -25,6 +25,8 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <direct.h>
+#else
+#include <unistd.h>  /* usleep */
 #endif
 
 /* ── Engine headers ── */
@@ -42,6 +44,11 @@
 #include "refund.h"    /* load_refund_policy                                 */
 #include "payment.h"   /* wallet_topup                                       */
 #include "reports.h"   /* tmdb error contract + curl lifecycle               */
+#include "keystore.h"  /* encrypted API key storage                          */
+#include "integrity.h" /* transaction integrity verification                 */
+#include "wizard.h"    /* first-run setup wizard                            */
+#include "ui_utils.h"  /* smart screen clear                                */
+#include "banner.h"    /* startup banner                                     */
 
 int tmdb_bulk_import_now_playing(const char *api_key, int *out_movie_ids, int max_out);
 
@@ -98,6 +105,12 @@ static void diag_log(const char *fmt, ...)
 /* ─────────────────────────────────────────────────────────────────────────────
  * read_conf — parse key=value lines from cinebook.conf.
  * Reads DEFAULT_CITY, BASE_CURRENCY_SYM, and TMDB_API_KEY.
+ * 
+ * Enhanced with encrypted API key support:
+ *   1. First checks for .api_key file (encrypted format)
+ *   2. If found, decrypts and loads API key
+ *   3. Otherwise, falls back to cinebook.conf TMDB_API_KEY
+ *   4. If found in cinebook.conf, auto-migrates to encrypted .api_key
  * ───────────────────────────────────────────────────────────────────────────*/
 static int tmdb_api_key_is_valid_format(const char *k)
 {
@@ -116,6 +129,13 @@ static int tmdb_api_key_is_valid_format(const char *k)
     return 1;
 }
 
+static int file_exists_path(const char *path)
+{
+    struct stat st;
+    if (!path || path[0] == '\0') return 0;
+    return stat(path, &st) == 0;
+}
+
 static void read_conf(char *default_city, int city_max,
                       char *currency_sym,  int sym_max)
 {
@@ -125,6 +145,62 @@ static void read_conf(char *default_city, int city_max,
     strncpy(currency_sym, "\xe2\x82\xb9", (size_t)(sym_max - 1)); /* UTF-8 ₹ */
     currency_sym[sym_max - 1] = '\0';
 
+    /* ─────────────────────────────────────────────────────────────────────
+     * Step 1: Try loading encrypted API key from .api_key file
+     * If decrypt fails, self-heal by removing stale/corrupted file so
+     * setup wizard can recreate it from legacy key or fresh prompt.
+     * ───────────────────────────────────────────────────────────────────── */
+    if (file_exists_path(".api_key")) {
+        char *decrypted_key = decrypt_api_key(".api_key");
+        if (decrypted_key) {
+            strncpy(g_tmdb_api_key, decrypted_key, sizeof(g_tmdb_api_key) - 1);
+            g_tmdb_api_key[sizeof(g_tmdb_api_key) - 1] = '\0';
+            secure_zero(decrypted_key, strlen(decrypted_key));
+            free(decrypted_key);
+            
+            /* Still parse cinebook.conf for other settings */
+            FILE *f = fopen(CONF_PATH, "r");
+            if (f) {
+                char line[256];
+                while (fgets(line, sizeof(line), f)) {
+                    size_t len = strlen(line);
+                    while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r'))
+                        line[--len] = '\0';
+
+                    if (strncmp(line, "DEFAULT_CITY=", 13) == 0) {
+                        strncpy(default_city, line + 13, (size_t)(city_max - 1));
+                        default_city[city_max - 1] = '\0';
+                    } else if (strncmp(line, "BASE_CURRENCY_SYM=", 18) == 0) {
+                        strncpy(currency_sym, line + 18, (size_t)(sym_max - 1));
+                        currency_sym[sym_max - 1] = '\0';
+                    } else if (strncmp(line, "TMDB_DEBUG=", 11) == 0) {
+                        g_tmdb_debug_mode = atoi(line + 11) ? 1 : 0;
+                    } else if (strncmp(line, "DEBUG=", 6) == 0) {
+                        g_debug_mode = atoi(line + 6) ? 1 : 0;
+                    } else if (strncmp(line, "TMDB_ALLOW_INSECURE_SSL=", 24) == 0) {
+                        g_tmdb_allow_insecure_ssl = atoi(line + 24) ? 1 : 0;
+                    } else if (strncmp(line, "TMDB_CA_BUNDLE=", 15) == 0) {
+                        strncpy(g_tmdb_ca_bundle, line + 15, sizeof(g_tmdb_ca_bundle) - 1);
+                        g_tmdb_ca_bundle[sizeof(g_tmdb_ca_bundle) - 1] = '\0';
+                    }
+                }
+                fclose(f);
+            }
+            
+            diag_log("[config] Loaded TMDB API key from encrypted .api_key file\n");
+            return;
+        }
+
+        if (remove(".api_key") == 0) {
+            diag_log("[config] Removed unreadable/corrupted .api_key; setup wizard will recreate it\n");
+        } else {
+            fprintf(stderr, "  [warn] .api_key unreadable and could not be removed; setup may prompt again.\n");
+        }
+    }
+
+    /* ─────────────────────────────────────────────────────────────────────
+     * Step 2: Fall back to cinebook.conf (legacy plaintext format)
+     * ───────────────────────────────────────────────────────────────────── */
     FILE *f = fopen(CONF_PATH, "r");
     if (!f) {
         fprintf(stderr, "  [warn] Cannot open %s — using defaults.\n", CONF_PATH);
@@ -132,6 +208,9 @@ static void read_conf(char *default_city, int city_max,
     }
 
     char line[256];
+    char plaintext_api_key[128] = {0};
+    int found_plaintext_key = 0;
+    
     while (fgets(line, sizeof(line), f)) {
         /* Strip trailing newline / carriage return */
         size_t len = strlen(line);
@@ -145,8 +224,9 @@ static void read_conf(char *default_city, int city_max,
             strncpy(currency_sym, line + 18, (size_t)(sym_max - 1));
             currency_sym[sym_max - 1] = '\0';
         } else if (strncmp(line, "TMDB_API_KEY=", 13) == 0) {
-            strncpy(g_tmdb_api_key, line + 13, sizeof(g_tmdb_api_key) - 1);
-            g_tmdb_api_key[sizeof(g_tmdb_api_key) - 1] = '\0';
+            strncpy(plaintext_api_key, line + 13, sizeof(plaintext_api_key) - 1);
+            plaintext_api_key[sizeof(plaintext_api_key) - 1] = '\0';
+            found_plaintext_key = 1;
         } else if (strncmp(line, "TMDB_DEBUG=", 11) == 0) {
             g_tmdb_debug_mode = atoi(line + 11) ? 1 : 0;
         } else if (strncmp(line, "DEBUG=", 6) == 0) {
@@ -159,13 +239,32 @@ static void read_conf(char *default_city, int city_max,
         }
     }
     fclose(f);
+    
+    /* ─────────────────────────────────────────────────────────────────────
+     * Step 3: Auto-migrate plaintext API key to encrypted format
+     * ───────────────────────────────────────────────────────────────────── */
+    if (found_plaintext_key && plaintext_api_key[0] != '\0') {
+        /* Copy to global variable */
+        strncpy(g_tmdb_api_key, plaintext_api_key, sizeof(g_tmdb_api_key) - 1);
+        g_tmdb_api_key[sizeof(g_tmdb_api_key) - 1] = '\0';
+        
+        /* Attempt migration to encrypted storage */
+        diag_log("[config] Found plaintext TMDB_API_KEY in %s\n", CONF_PATH);
+        diag_log("[config] Migrating to encrypted .api_key file...\n");
+        
+        if (encrypt_api_key(plaintext_api_key, ".api_key") == 0) {
+            diag_log("[config] ✓ API key migrated to encrypted storage\n");
+            diag_log("[config]   You can now remove TMDB_API_KEY from %s\n", CONF_PATH);
+        } else {
+            fprintf(stderr, "  [warn] Failed to migrate API key to encrypted storage\n");
+            fprintf(stderr, "  [warn] Continuing with plaintext key from %s\n", CONF_PATH);
+        }
+        
+        /* Zero out plaintext key from memory */
+        secure_zero(plaintext_api_key, sizeof(plaintext_api_key));
+    }
 }
 
-static void clear_screen(void)
-{
-    printf("\033[2J\033[H");
-    fflush(stdout);
-}
 
 static void ensure_runtime_dirs(void)
 {
@@ -681,7 +780,7 @@ static void user_menu(SessionContext *ctx)
     char buf[16];
 
     while (1) {
-        clear_screen();
+        smart_clear(UI_CONTEXT_MENU);
 
         char city[64];
         char date_str[32];
@@ -811,14 +910,7 @@ void cinebook_curl_cleanup(void);
 #endif
 
     /* ── Banner ── */
-    printf("\n");
-    printf("  ██████╗██╗███╗   ██╗███████╗██████╗  ██████╗  ██████╗ ██╗  ██╗\n");
-    printf("  ██╔════╝██║████╗  ██║██╔════╝██╔══██╗██╔═══██╗██╔═══██╗██║ ██╔╝\n");
-    printf("  ██║     ██║██╔██╗ ██║█████╗  ██████╔╝██║   ██║██║   ██║█████╔╝ \n");
-    printf("  ██║     ██║██║╚██╗██║██╔══╝  ██╔══██╗██║   ██║██║   ██║██╔═██╗ \n");
-    printf("  ╚██████╗██║██║ ╚████║███████╗██████╔╝╚██████╔╝╚██████╔╝██║  ██╗\n");
-    printf("   ╚═════╝╚═╝╚═╝  ╚═══╝╚══════╝╚═════╝  ╚═════╝  ╚═════╝ ╚═╝  ╚═╝\n");
-    printf("\n  Terminal Cinema Booking System  |  BACSE104\n\n");
+    show_banner();
 
     /* ── initialise libcurl once for the entire process ── */
     cinebook_curl_init();
@@ -845,7 +937,36 @@ void cinebook_curl_cleanup(void);
     /* 3. WAL / transaction recovery — warn-only */
     diag_log("  [boot] Opening WAL and running crash recovery ... ");
     txn_init();
-    diag_log("OK\n");
+    {
+        WALRecoverySummary wal_summary = wal_get_last_recovery_summary();
+        diag_log("OK (scanned=%u committed=%u uncommitted=%u rolled_back=%u restore_fail=%u next_txn=%u)\n",
+                 wal_summary.entries_scanned,
+                 wal_summary.committed_entries,
+                 wal_summary.uncommitted_entries,
+                 wal_summary.rolled_back_entries,
+                 wal_summary.restore_failures,
+                 wal_summary.next_txn_id);
+        if (wal_summary.checksum_mismatches > 0 || wal_summary.legacy_header_detected || wal_summary.wal_rewritten) {
+            diag_log("  [boot] WAL notes: checksum_mismatch=%u legacy_header=%u rewritten=%u\n",
+                     wal_summary.checksum_mismatches,
+                     wal_summary.legacy_header_detected,
+                     wal_summary.wal_rewritten);
+        }
+    }
+
+    /* 3b. Integrity verification after WAL recovery */
+    diag_log("  [boot] Verifying transaction integrity ... ");
+    IntegrityReport *integrity = verify_transaction_state();
+    if (integrity) {
+        if (integrity->total_issues > 0) {
+            diag_log("WARN (%d issue(s) detected)\n", integrity->total_issues);
+        } else {
+            diag_log("OK\n");
+        }
+        free_integrity_report(integrity);
+    } else {
+        diag_log("WARN (integrity check unavailable)\n");
+    }
 
     /* 4. Indexes — warn-only */
     diag_log("  [boot] Rebuilding in-memory indexes ... ");
@@ -865,6 +986,11 @@ void cinebook_curl_cleanup(void);
     char default_city[CITY_MAX];
     char currency_sym[SYM_MAX];
     read_conf(default_city, CITY_MAX, currency_sym, SYM_MAX);
+
+    /* First-run interactive setup wizard (idempotent) */
+    if (!setup_wizard_run(0, g_tmdb_api_key, sizeof(g_tmdb_api_key))) {
+        fprintf(stderr, "  [warn] Setup wizard did not complete; TMDB features may be limited.\n");
+    }
 
     if (g_tmdb_api_key[0] != '\0' && !tmdb_api_key_is_valid_format(g_tmdb_api_key)) {
         fprintf(stderr, "  [warn] TMDB_API_KEY format looks invalid; TMDB features disabled.\n");
@@ -902,7 +1028,7 @@ void cinebook_curl_cleanup(void);
         if (ctx.user_id == 0)
             break;
 
-        clear_screen();
+        smart_clear(UI_CONTEXT_MENU);
 
         if (ctx.is_admin)
             admin_menu(&ctx);

@@ -15,6 +15,7 @@
 #include "auth.h"      /* sha256_hex, upgrade_to_student, UserRole              */
 #include "location.h"  /* pick_city                                              */
 #include "txn.h"       /* wal_begin, wal_commit, wal_rollback                    */
+#include "ui_utils.h"  /* draw_separator, draw_section_break                     */
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * Internal helpers

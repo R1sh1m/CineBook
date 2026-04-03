@@ -46,11 +46,31 @@ make_dirs() {
     ok "Runtime directories ready (data/db  data/idx  exports)"
 }
 
+# ── Build tool resolver ───────────────────────────────────────────────────────
+resolve_make_cmd() {
+    if command -v make >/dev/null 2>&1; then
+        echo "make"
+        return 0
+    fi
+    if command -v mingw32-make >/dev/null 2>&1; then
+        echo "mingw32-make"
+        return 0
+    fi
+    return 1
+}
+
 # ── Build ─────────────────────────────────────────────────────────────────────
 do_build() {
     step "Building CineBook..."
     ruler
-    if make -j"$(nproc 2>/dev/null || echo 2)"; then
+
+    local make_cmd
+    make_cmd="$(resolve_make_cmd)" || {
+        fail "No 'make' tool found. Install build tools first (Linux: sudo apt install build-essential)."
+        return 1
+    }
+
+    if "$make_cmd" -j"$(nproc 2>/dev/null || echo 2)"; then
         ok "Build successful  →  ./cinebook"
     else
         fail "Build failed.  Fix errors above and try again."
@@ -61,7 +81,12 @@ do_build() {
 # ── Clean build ───────────────────────────────────────────────────────────────
 do_clean_build() {
     step "Cleaning previous build..."
-    make clean 2>/dev/null || true
+    local make_cmd
+    make_cmd="$(resolve_make_cmd)" || {
+        fail "No 'make' tool found. Install build tools first (Linux: sudo apt install build-essential)."
+        return 1
+    }
+    "$make_cmd" clean 2>/dev/null || true
     ok "Cleaned."
     do_build
 }
@@ -184,7 +209,11 @@ show_menu() {
     fi
 
     local db_count
-    db_count=$(ls data/db/*.db 2>/dev/null | wc -l || echo 0)
+    local db_files=()
+    shopt -s nullglob
+    db_files=(data/db/*.db)
+    shopt -u nullglob
+    db_count=${#db_files[@]}
     if (( db_count > 0 )); then
         echo -e "  Data    : ${GRN}${db_count} .db files present${RST}"
     else

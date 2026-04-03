@@ -20,6 +20,7 @@
 
 #include "session.h"    /* brings in auth.h (UserRole) */
 #include "query.h"      /* db_select, db_update, result_set_free, WhereClause */
+#include "storage.h"    /* storage_flush_all */
 
 /* Default currency symbol when lookup fails */
 #define DEFAULT_CURRENCY_SYM  "\xe2\x82\xb9"  /* UTF-8 for ₹ */
@@ -199,6 +200,10 @@ void session_clear(SessionContext *ctx)
 
         /* Set status = AVAILABLE (0) for all seats held by this user */
         db_update("seat_status", where_held, 2, "status", &avail_status);
+        
+        /* CRITICAL FIX: Flush all dirty pages to disk immediately to prevent
+         * race condition where next user reads stale seat_status from disk */
+        storage_flush_all();
     }
 
     /* ── 2. Free heap-allocated seat id array ── */

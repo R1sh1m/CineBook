@@ -1,0 +1,14 @@
+# CineBook runtime config template
+# Copy this file to `cinebook.conf` and edit local values.
+# Do NOT commit your real `cinebook.conf` if it contains secrets.
+
+# Legacy plaintext key support (program can migrate this to encrypted `.api_key`).
+# Keep empty by default.
+TMDB_API_KEY=
+
+# Optional TLS CA bundle path override for TMDB requests (leave empty to use system defaults).
+TMDB_CA_BUNDLE=
+
+# Optional defaults (used by tooling/docs; app logic primarily resolves from database/session).
+DEFAULT_CITY=Mumbai
+CURRENCY=INR

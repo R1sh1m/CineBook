@@ -3,7 +3,7 @@
 <div align="center">
 
 ```
-  ██████╗██╗███╗   ██╗███████╗██████╗  ██████╗  ██████╗ ██╗  ██╗
+   ██████╗██╗███╗   ██╗███████╗██████╗  ██████╗  ██████╗ ██╗  ██╗
   ██╔════╝██║████╗  ██║██╔════╝██╔══██╗██╔═══██╗██╔═══██╗██║ ██╔╝
   ██║     ██║██╔██╗ ██║█████╗  ██████╔╝██║   ██║██║   ██║█████╔╝ 
   ██║     ██║██║╚██╗██║██╔══╝  ██╔══██╗██║   ██║██║   ██║██╔═██╗ 
@@ -33,6 +33,7 @@ It simulates a real-world booking platform with:
 - **Live movie data** pulled from [TMDB](https://www.themoviedb.org/) via libcurl
 - A **custom RDBMS engine** written from scratch — 4 KB page files, WAL crash recovery, LRU buffer pool, hash + sorted indexes
 - A **C++ OOP analytics layer** with abstract report classes, polymorphic dispatch, and STL containers
+- A **secure first-run setup flow** with encrypted TMDB key storage (`.api_key`) and setup marker (`.setup_complete`)
 - A rich **ANSI terminal UI** — interactive seat maps, price breakdowns, booking receipts
 
 No SQLite. No PostgreSQL. No Python. Every byte on disk is managed by the C program files.
@@ -188,18 +189,17 @@ CineBook works out of the box with the seeded dataset. To enable **live movie im
 
 1. Create a free account at [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api)
 2. Generate a **v3 API key**
-3. Open `Cinebook.conf` and replace the key:
+3. Launch CineBook and complete the first-run wizard prompt  
+   (Admin can later update via **Movie Management → Update TMDB API key (secure wizard)**)
 
-```ini
-TMDB_API_KEY=your_api_key_here
-DEFAULT_CITY=Chennai
-BASE_CURRENCY=INR
-BASE_CURRENCY_SYM=Rs
-```
+Notes:
+- API keys are stored encrypted in `.api_key`
+- Setup completion is tracked by `.setup_complete`
+- Legacy plaintext `TMDB_API_KEY` from config is migrated automatically when possible
 
-4. Log in as Admin → **Movie Management** → **SUPER IMPORT** to pull all currently-showing titles (India region), or use **Import from TMDB** to search by title.
+Log in as Admin → **Movie Management** → **SUPER IMPORT** to pull currently showing titles (India region), or use **Import from TMDB** to search by title.
 
-Without a key, you can still add movies manually via Admin → Movie Management → Add Movie Manually.
+Without a key, manual movie entry remains available via Admin → Movie Management → Add Movie Manually.
 
 ---
 
@@ -244,7 +244,7 @@ Admin Login
 │       ├── Revenue Report     — by movie and by theatre
 │       └── Booking Trends     — by hour-of-day and day-of-week
 │               └── Export to CSV  →  exports/dashboard_YYYYMMDD_HHMMSS.csv
-└── System Management  — cities, academic domains, refund policy tiers
+└── System Management  — cities, academic domains, refund policy tiers, integrity tools, database optimize
 ```
 
 ---
@@ -253,7 +253,7 @@ Admin Login
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  ① Entry        main.c  ·  Cinebook.conf                    │
+│  ① Entry        main.c  ·  cinebook.conf  ·  setup wizard   │
 ├──────────────────────────────────────────────────────────────┤
 │  ② Bootstrap    schema.c  ·  storage.c  ·  txn.c  ·  index.c │
 ├──────────────────────────────────────────────────────────────┤

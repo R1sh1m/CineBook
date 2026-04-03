@@ -23,6 +23,7 @@
 #include "session.h"    /* SessionContext                                               */
 #include "location.h"   /* pick_city                                                   */
 #include "reports.h"    /* tmdb_get_streaming_platforms                                */
+#include "ui_utils.h"   /* smart_clear, draw_separator                                  */
 
 #define MAX_SHOWS_DISPLAY 128
 #define BOX_INNER         56
@@ -188,7 +189,7 @@ void browse_movies(SessionContext *ctx)
     char language_filter[128];
     char input[32];
 
-    printf("\033[2J\033[H");
+    smart_clear(UI_CONTEXT_BROWSING);
     printf("\n  \033[1m╔══ MOVIES IN CINEMAS ══════════════════════════════════╗\033[0m\n");
 
     printf("  Filter by genre  : ");

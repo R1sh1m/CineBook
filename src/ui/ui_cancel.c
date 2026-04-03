@@ -11,6 +11,7 @@
 #include "query.h"    /* db_select, WhereClause, ResultSet, result_set_free */
 #include "session.h"  /* SessionContext */
 #include "refund.h"   /* compute_refund, execute_cancellation, RefundResult */
+#include "ui_utils.h" /* draw_separator, draw_section_break                 */
 
 #define MAX_CANCELLABLE  64
 #define DATETIME_LEN     20    /* "YYYY-MM-DD HH:MM\0" */
