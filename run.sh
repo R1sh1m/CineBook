@@ -40,6 +40,7 @@ echo
 print_rainbow_block "  CineBook — Auto Setup & Launch"
 echo "  ────────────────────────────────────"
 
+
 OS="$(uname -s)"
 case "$OS" in
     Linux*)     PLATFORM="linux" ;;
@@ -48,6 +49,27 @@ case "$OS" in
     *)          die "Unsupported platform: $OS" ;;
 esac
 ok "Platform: $PLATFORM"
+
+# If on Windows (not inside MSYS2), check for MSYS2 and auto-install if missing
+if [[ "$PLATFORM" == "msys2" ]]; then
+    if ! command -v bash &>/dev/null || [[ ! -f "/usr/bin/bash.exe" && ! -f "/c/msys64/usr/bin/bash.exe" && ! -f "$HOME/msys64/usr/bin/bash.exe" ]]; then
+        warn "MSYS2 not found. Attempting to download and install MSYS2 automatically..."
+        MSYS2_INSTALLER_URL="https://github.com/msys2/msys2-installer/releases/latest/download/msys2-x86_64-latest.exe"
+        MSYS2_INSTALLER="msys2-x86_64-latest.exe"
+        if [ -f "$MSYS2_INSTALLER" ]; then rm -f "$MSYS2_INSTALLER"; fi
+        if command -v curl &>/dev/null; then
+            curl -L -o "$MSYS2_INSTALLER" "$MSYS2_INSTALLER_URL" || die "Failed to download MSYS2 installer. Please install manually from https://www.msys2.org/"
+        elif command -v wget &>/dev/null; then
+            wget -O "$MSYS2_INSTALLER" "$MSYS2_INSTALLER_URL" || die "Failed to download MSYS2 installer. Please install manually from https://www.msys2.org/"
+        else
+            die "Neither curl nor wget found. Please download and install MSYS2 from https://www.msys2.org/"
+        fi
+        warn "Running MSYS2 installer..."
+        cmd.exe /C start "" "%CD%\\$MSYS2_INSTALLER"
+        warn "Please complete the MSYS2 installation in the installer window, then re-run this script."
+        exit 1
+    fi
+fi
 
 case "$PLATFORM" in
     linux)
