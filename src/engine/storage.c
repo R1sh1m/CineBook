@@ -14,12 +14,14 @@
  */
 
 #include "storage.h"
+#include "schema.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <limits.h>
+#include <time.h>
 
 /* ── WAL forward declaration (implemented in txn.c) ─────────────────────── */
 extern int wal_log(const char  *table,
@@ -45,7 +47,13 @@ static PoolEntry  s_pool[POOL_SIZE];
 static uint64_t   s_clock = 0;   /* monotonic access counter                 */
 
 #define CAPACITY_WARN_TABLES 64
+#define STORAGE_CONFIG_PATH ".storage_config"
+#define MAX_EXPANSIONS_PER_HOUR 3
+
 static char s_capacity_warned[CAPACITY_WARN_TABLES][TABLE_NAME_MAX];
+static unsigned int s_runtime_max_pages_per_table = STORAGE_MAX_PAGES_PER_TABLE;
+static int s_storage_auto_expand = 1;
+static time_t s_expansion_times[MAX_EXPANSIONS_PER_HOUR];
 
 static int capacity_warn_once(const char *table, const char *msg)
 {
@@ -68,6 +76,85 @@ static int capacity_warn_once(const char *table, const char *msg)
 
     fprintf(stderr, "%s\n", msg);
     return 1;
+}
+
+static int storage_save_config(void)
+{
+    FILE *f = fopen(STORAGE_CONFIG_PATH, "wb");
+    if (!f) return 0;
+    fprintf(f, "max_pages_per_table=%u\n", s_runtime_max_pages_per_table);
+    fprintf(f, "auto_expand=%d\n", s_storage_auto_expand ? 1 : 0);
+    fclose(f);
+    return 1;
+}
+
+static void storage_load_config(void)
+{
+    FILE *f = fopen(STORAGE_CONFIG_PATH, "rb");
+    if (!f) return;
+
+    char line[128];
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, "max_pages_per_table=", 20) == 0) {
+            unsigned long v = strtoul(line + 20, NULL, 10);
+            if (v >= STORAGE_MAX_PAGES_PER_TABLE && v <= STORAGE_MAX_ABSOLUTE_PAGES) {
+                s_runtime_max_pages_per_table = (unsigned int)v;
+            }
+        } else if (strncmp(line, "auto_expand=", 12) == 0) {
+            s_storage_auto_expand = (atoi(line + 12) != 0) ? 1 : 0;
+        }
+    }
+    fclose(f);
+}
+
+static int expansions_in_last_hour(void)
+{
+    time_t now = time(NULL);
+    int cnt = 0;
+    for (int i = 0; i < MAX_EXPANSIONS_PER_HOUR; i++) {
+        if (s_expansion_times[i] > 0 && difftime(now, s_expansion_times[i]) <= 3600.0) {
+            cnt++;
+        }
+    }
+    return cnt;
+}
+
+static void record_expansion_now(void)
+{
+    time_t now = time(NULL);
+    int oldest_idx = 0;
+    for (int i = 1; i < MAX_EXPANSIONS_PER_HOUR; i++) {
+        if (s_expansion_times[i] < s_expansion_times[oldest_idx]) oldest_idx = i;
+    }
+    s_expansion_times[oldest_idx] = now;
+}
+
+static void maybe_expand_capacity(const char *table, int current_pages)
+{
+    if (!table || current_pages < 0) return;
+    if (!s_storage_auto_expand) return;
+    if (s_runtime_max_pages_per_table >= STORAGE_MAX_ABSOLUTE_PAGES) return;
+
+    if (s_runtime_max_pages_per_table == 0) return;
+    int pct = (int)(((unsigned long long)current_pages * 100ULL) /
+                    (unsigned long long)s_runtime_max_pages_per_table);
+
+    if (pct < STORAGE_AUTO_EXPAND_THRESHOLD_PCT) return;
+    if (expansions_in_last_hour() >= MAX_EXPANSIONS_PER_HOUR) return;
+
+    unsigned int grown = s_runtime_max_pages_per_table + (s_runtime_max_pages_per_table / 5u);
+    if (grown <= s_runtime_max_pages_per_table) grown = s_runtime_max_pages_per_table + 1u;
+    if (grown > STORAGE_MAX_ABSOLUTE_PAGES) grown = STORAGE_MAX_ABSOLUTE_PAGES;
+
+    if (grown > s_runtime_max_pages_per_table) {
+        unsigned int old = s_runtime_max_pages_per_table;
+        s_runtime_max_pages_per_table = grown;
+        record_expansion_now();
+        storage_save_config();
+        fprintf(stderr,
+                "[storage] INFO: auto-expanded capacity for '%s' from %u to %u pages (usage=%d%%)\n",
+                table, old, s_runtime_max_pages_per_table, pct);
+    }
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -231,6 +318,10 @@ void storage_init(void)
     memset(s_pool,  0, sizeof(s_pool));
     memset(s_files, 0, sizeof(s_files));
     memset(s_capacity_warned, 0, sizeof(s_capacity_warned));
+    memset(s_expansion_times, 0, sizeof(s_expansion_times));
+    s_runtime_max_pages_per_table = STORAGE_MAX_PAGES_PER_TABLE;
+    s_storage_auto_expand = 1;
+    storage_load_config();
     s_clock = 0;
 }
 
@@ -468,22 +559,10 @@ Page *page_alloc(const char *table, size_t record_size)
         return NULL;
     }
 
-    uint64_t est_rows = ((uint64_t)POOL_SIZE * (uint64_t)PAGE_SIZE) / (uint64_t)record_size;
-    if (est_rows == 0) est_rows = 1;
-    uint64_t page_guard = est_rows / (uint64_t)slots_per_page;
-    if ((est_rows % (uint64_t)slots_per_page) != 0) page_guard++;
-    if (page_guard == 0) page_guard = 1;
-
-    if ((uint64_t)total >= page_guard) {
-        char warn[256];
-        snprintf(warn, sizeof(warn),
-                 "[storage] WARN: capacity guard hit for table '%s' (pages=%d, guard=%llu, est_rows=%llu).",
-                 table, total,
-                 (unsigned long long)page_guard,
-                 (unsigned long long)est_rows);
-        capacity_warn_once(table, warn);
-        return NULL;
-    }
+    /* Allow tables to grow up to configured finite storage limits.
+     * The old pool-derived guard blocked valid growth (e.g. seat_status during
+     * show scheduling). Rely on explicit max-page limits instead. */
+    maybe_expand_capacity(table, total);
 
     if (total > 0) {
         uint32_t last_pid = (uint32_t)(total - 1);
@@ -497,11 +576,11 @@ Page *page_alloc(const char *table, size_t record_size)
     }
 
     /* Storage is finite by design. */
-    if ((uint32_t)total >= STORAGE_MAX_PAGES_PER_TABLE) {
+    if ((uint32_t)total >= s_runtime_max_pages_per_table) {
         char warn[256];
         snprintf(warn, sizeof(warn),
                  "[storage] WARN: capacity exhausted for table '%s' (max pages=%u).",
-                 table, STORAGE_MAX_PAGES_PER_TABLE);
+                 table, s_runtime_max_pages_per_table);
         capacity_warn_once(table, warn);
         return NULL;
     }
@@ -568,11 +647,11 @@ int storage_get_page_count(const char *table)
 
     long pages = size / page_size_l;
     if (pages < 0) return 0;
-    if ((uint32_t)pages > STORAGE_MAX_PAGES_PER_TABLE) {
+    if ((uint32_t)pages > s_runtime_max_pages_per_table) {
         fprintf(stderr,
                 "[storage] ERROR: table '%s' exceeds max configured pages (%u)\n",
-                table, STORAGE_MAX_PAGES_PER_TABLE);
-        pages = (long)STORAGE_MAX_PAGES_PER_TABLE;
+                table, s_runtime_max_pages_per_table);
+        pages = (long)s_runtime_max_pages_per_table;
     }
 
     if (pages > INT_MAX) {
@@ -601,14 +680,14 @@ int storage_get_capacity(const char *table, size_t record_size,
         return -1;
     }
 
-    long long max_total = (long long)STORAGE_MAX_PAGES_PER_TABLE * (long long)spp;
+    long long max_total = (long long)s_runtime_max_pages_per_table * (long long)spp;
     if (max_total > INT_MAX) max_total = INT_MAX;
     *max_slots = (int)max_total;
 
     int total_pages = storage_get_page_count(table);
     if (total_pages < 0) total_pages = 0;
-    if ((uint32_t)total_pages > STORAGE_MAX_PAGES_PER_TABLE) {
-        total_pages = (int)STORAGE_MAX_PAGES_PER_TABLE;
+    if ((uint32_t)total_pages > s_runtime_max_pages_per_table) {
+        total_pages = (int)s_runtime_max_pages_per_table;
     }
 
     long long used = 0;
@@ -652,3 +731,355 @@ int storage_get_capacity(const char *table, size_t record_size,
     if (*free_slots < 0) *free_slots = 0;
     return 0;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Storage Capacity Monitoring Implementation
+ * ───────────────────────────────────────────────────────────────────────────*/
+
+/*
+ * get_table_size_bytes — Return total bytes allocated for a table's .db file.
+ */
+long get_table_size_bytes(const char *table_name)
+{
+    if (!table_name || table_name[0] == '\0') {
+        fprintf(stderr, "[storage] ERROR: get_table_size_bytes called with invalid table name\n");
+        return -1;
+    }
+
+    int page_count = storage_get_page_count(table_name);
+    if (page_count < 0) {
+        return -1;
+    }
+
+    return (long)page_count * (long)PAGE_SIZE;
+}
+
+/*
+ * get_table_row_count — Count non-empty rows in a table.
+ */
+int get_table_row_count(const char *table_name)
+{
+    if (!table_name || table_name[0] == '\0') {
+        fprintf(stderr, "[storage] ERROR: get_table_row_count called with invalid table name\n");
+        return -1;
+    }
+
+    Schema *schema = get_schema(table_name);
+    if (!schema) {
+        fprintf(stderr, "[storage] ERROR: no schema found for table '%s'\n", table_name);
+        return -1;
+    }
+
+    size_t record_size = (size_t)schema->record_size;
+    if (record_size == 0 || record_size > PAGE_DATA_SIZE) {
+        fprintf(stderr, "[storage] ERROR: invalid record_size=%zu for table '%s'\n",
+                record_size, table_name);
+        return -1;
+    }
+
+    int slots_per_page = (int)(PAGE_DATA_SIZE / record_size);
+    if (slots_per_page <= 0) {
+        return 0;
+    }
+
+    int total_pages = storage_get_page_count(table_name);
+    if (total_pages <= 0) {
+        return 0;
+    }
+
+    long long row_count = 0;
+    uint8_t raw_slot[PAGE_DATA_SIZE];
+
+    for (int pg = 0; pg < total_pages; pg++) {
+        Page *p = page_read(table_name, (uint32_t)pg);
+        if (!p) {
+            continue;
+        }
+
+        for (int sl = 0; sl < slots_per_page; sl++) {
+            if (slot_read(p, (uint16_t)sl, raw_slot, record_size) != 0) {
+                continue;
+            }
+
+            /* Check if slot is non-empty (first 4 bytes or record_size if smaller) */
+            int is_empty = 1;
+            size_t probe = record_size < 4 ? record_size : 4;
+            for (size_t b = 0; b < probe; b++) {
+                if (raw_slot[b] != 0) {
+                    is_empty = 0;
+                    break;
+                }
+            }
+
+            if (!is_empty) {
+                row_count++;
+                if (row_count > INT_MAX) {
+                    return INT_MAX;
+                }
+            }
+        }
+    }
+
+    return (int)row_count;
+}
+
+/*
+ * get_table_fragmentation — Calculate fragmentation ratio for a table.
+ * Fragmentation = (empty_slots_in_allocated_pages / total_allocated_slots)
+ */
+float get_table_fragmentation(const char *table_name)
+{
+    if (!table_name || table_name[0] == '\0') {
+        fprintf(stderr, "[storage] ERROR: get_table_fragmentation called with invalid table name\n");
+        return -1.0f;
+    }
+
+    Schema *schema = get_schema(table_name);
+    if (!schema) {
+        fprintf(stderr, "[storage] ERROR: no schema found for table '%s'\n", table_name);
+        return -1.0f;
+    }
+
+    size_t record_size = (size_t)schema->record_size;
+    if (record_size == 0 || record_size > PAGE_DATA_SIZE) {
+        return -1.0f;
+    }
+
+    int slots_per_page = (int)(PAGE_DATA_SIZE / record_size);
+    if (slots_per_page <= 0) {
+        return 0.0f;
+    }
+
+    int total_pages = storage_get_page_count(table_name);
+    if (total_pages <= 0) {
+        return 0.0f;  /* No pages = no fragmentation */
+    }
+
+    long long total_slots = (long long)total_pages * (long long)slots_per_page;
+    long long used_slots = 0;
+    uint8_t raw_slot[PAGE_DATA_SIZE];
+
+    for (int pg = 0; pg < total_pages; pg++) {
+        Page *p = page_read(table_name, (uint32_t)pg);
+        if (!p) {
+            continue;
+        }
+
+        for (int sl = 0; sl < slots_per_page; sl++) {
+            if (slot_read(p, (uint16_t)sl, raw_slot, record_size) != 0) {
+                continue;
+            }
+
+            int is_empty = 1;
+            size_t probe = record_size < 4 ? record_size : 4;
+            for (size_t b = 0; b < probe; b++) {
+                if (raw_slot[b] != 0) {
+                    is_empty = 0;
+                    break;
+                }
+            }
+
+            if (!is_empty) {
+                used_slots++;
+            }
+        }
+    }
+
+    if (total_slots == 0) {
+        return 0.0f;
+    }
+
+    long long empty_slots = total_slots - used_slots;
+    float fragmentation = (float)empty_slots / (float)total_slots;
+
+    /* Clamp to [0.0, 1.0] */
+    if (fragmentation < 0.0f) fragmentation = 0.0f;
+    if (fragmentation > 1.0f) fragmentation = 1.0f;
+
+    return fragmentation;
+}
+
+/*
+ * get_table_stats — Populate detailed statistics for a specific table.
+ */
+int get_table_stats(const char *table_name, TableStats *stats)
+{
+    if (!table_name || table_name[0] == '\0' || !stats) {
+        fprintf(stderr, "[storage] ERROR: get_table_stats called with invalid arguments\n");
+        return -1;
+    }
+
+    memset(stats, 0, sizeof(*stats));
+
+    Schema *schema = get_schema(table_name);
+    if (!schema) {
+        fprintf(stderr, "[storage] ERROR: no schema found for table '%s'\n", table_name);
+        return -1;
+    }
+
+    strncpy(stats->table_name, table_name, TABLE_NAME_MAX - 1);
+    stats->table_name[TABLE_NAME_MAX - 1] = '\0';
+
+    stats->page_count = storage_get_page_count(table_name);
+    if (stats->page_count < 0) {
+        stats->page_count = 0;
+    }
+
+    stats->bytes_allocated = (long)stats->page_count * (long)PAGE_SIZE;
+
+    stats->row_count = get_table_row_count(table_name);
+    if (stats->row_count < 0) {
+        stats->row_count = 0;
+    }
+
+    stats->bytes_used = (long)stats->row_count * (long)schema->record_size;
+
+    stats->fragmentation_ratio = get_table_fragmentation(table_name);
+    if (stats->fragmentation_ratio < 0.0f) {
+        stats->fragmentation_ratio = 0.0f;
+    }
+
+    return 0;
+}
+
+/*
+ * get_storage_stats — Return overall storage statistics across all tables.
+ * Caller must free() the returned pointer.
+ */
+StorageStats *get_storage_stats(void)
+{
+    StorageStats *stats = (StorageStats *)malloc(sizeof(StorageStats));
+    if (!stats) {
+        fprintf(stderr, "[storage] ERROR: malloc failed for StorageStats\n");
+        return NULL;
+    }
+
+    if (storage_get_summary(stats) != 0) {
+        free(stats);
+        return NULL;
+    }
+
+    return stats;
+}
+
+int storage_get_summary(StorageStats *out_stats)
+{
+    if (!out_stats) {
+        fprintf(stderr, "[storage] ERROR: storage_get_summary called with NULL out_stats\n");
+        return -1;
+    }
+
+    memset(out_stats, 0, sizeof(*out_stats));
+
+    out_stats->max_pages_allowed = (int)s_runtime_max_pages_per_table;
+    out_stats->table_count = 0;
+
+    long long total_pages = 0;
+    long long total_bytes_used = 0;
+    long long total_allocated_slots = 0;
+    long long total_used_slots = 0;
+
+    /* Iterate over all schemas to gather statistics */
+    for (int i = 0; i < g_schema_count; i++) {
+        Schema *schema = &g_schemas[i];
+        if (!schema || schema->table_name[0] == '\0') {
+            continue;
+        }
+
+        int page_count = storage_get_page_count(schema->table_name);
+        if (page_count <= 0) {
+            continue;  /* Table has no pages yet */
+        }
+
+        out_stats->table_count++;
+        total_pages += page_count;
+
+        int row_count = get_table_row_count(schema->table_name);
+        if (row_count > 0) {
+            total_bytes_used += (long long)row_count * (long long)schema->record_size;
+
+            size_t record_size = (size_t)schema->record_size;
+            if (record_size > 0 && record_size <= PAGE_DATA_SIZE) {
+                int slots_per_page = (int)(PAGE_DATA_SIZE / record_size);
+                if (slots_per_page > 0) {
+                    total_allocated_slots += (long long)page_count * (long long)slots_per_page;
+                    total_used_slots += row_count;
+                }
+            }
+        }
+    }
+
+    /* Clamp to int range */
+    if (total_pages > INT_MAX) {
+        out_stats->total_pages_allocated = INT_MAX;
+        out_stats->pages_in_use = INT_MAX;
+    } else {
+        out_stats->total_pages_allocated = (int)total_pages;
+        out_stats->pages_in_use = (int)total_pages;  /* All allocated pages are in use */
+    }
+
+    out_stats->bytes_total = (long)out_stats->total_pages_allocated * (long)PAGE_SIZE;
+
+    if (total_bytes_used > LONG_MAX) {
+        out_stats->bytes_used = LONG_MAX;
+    } else {
+        out_stats->bytes_used = (long)total_bytes_used;
+    }
+
+    /* Calculate overall fragmentation */
+    if (total_allocated_slots > 0) {
+        long long empty_slots = total_allocated_slots - total_used_slots;
+        out_stats->fragmentation_ratio = (float)empty_slots / (float)total_allocated_slots;
+        if (out_stats->fragmentation_ratio < 0.0f) out_stats->fragmentation_ratio = 0.0f;
+        if (out_stats->fragmentation_ratio > 1.0f) out_stats->fragmentation_ratio = 1.0f;
+    } else {
+        out_stats->fragmentation_ratio = 0.0f;
+    }
+
+    return 0;
+}
+
+/*
+ * calculate_capacity_percentage — Return storage usage as percentage (0-100).
+ */
+int calculate_capacity_percentage(void)
+{
+    StorageStats *stats = get_storage_stats();
+    if (!stats) {
+        fprintf(stderr, "[storage] ERROR: get_storage_stats failed in calculate_capacity_percentage\n");
+        return -1;
+    }
+
+    int percentage = 0;
+    if (stats->max_pages_allowed > 0) {
+        long long pct = ((long long)stats->total_pages_allocated * 100LL) /
+                        (long long)stats->max_pages_allowed;
+        if (pct > 100) {
+            percentage = 100;
+        } else if (pct < 0) {
+            percentage = 0;
+        } else {
+            percentage = (int)pct;
+        }
+    }
+
+    free(stats);
+    return percentage;
+}
+
+unsigned int storage_get_max_pages_per_table(void)
+{
+    return s_runtime_max_pages_per_table;
+}
+
+int storage_set_auto_expand(int enabled)
+{
+    s_storage_auto_expand = enabled ? 1 : 0;
+    return storage_save_config() ? 0 : -1;
+}
+
+int storage_get_auto_expand(void)
+{
+    return s_storage_auto_expand ? 1 : 0;
+}
+

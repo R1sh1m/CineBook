@@ -18,6 +18,8 @@
 
 /* Hard per-table safety limit so storage is explicitly finite. */
 #define STORAGE_MAX_PAGES_PER_TABLE 1024u
+#define STORAGE_MAX_ABSOLUTE_PAGES  2621440u  /* ~10GB at 4KB/page */
+#define STORAGE_AUTO_EXPAND_THRESHOLD_PCT 82
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * Page struct
@@ -136,5 +138,69 @@ int    storage_get_page_count(const char *table);
  * Returns 0 on success, -1 on argument/error failure. */
 int    storage_get_capacity(const char *table, size_t record_size,
                             int *max_slots, int *used_slots, int *free_slots);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Storage Capacity Monitoring System
+ * ───────────────────────────────────────────────────────────────────────────*/
+
+/* Global storage capacity limit: 100,000 pages = ~400MB at 4KB per page */
+#define MAX_STORAGE_PAGES 100000
+
+/* Storage statistics structure */
+typedef struct {
+    int   total_pages_allocated;  /* Total pages allocated across all tables */
+    int   pages_in_use;            /* Pages containing data (in pool or disk) */
+    int   max_pages_allowed;       /* Maximum pages allowed (MAX_STORAGE_PAGES) */
+    long  bytes_total;             /* Total bytes allocated (pages * PAGE_SIZE) */
+    long  bytes_used;              /* Bytes used by actual data */
+    float fragmentation_ratio;     /* Overall fragmentation (0.0 - 1.0) */
+    int   table_count;             /* Number of active tables */
+} StorageStats;
+
+/* Per-table statistics structure */
+typedef struct {
+    char  table_name[TABLE_NAME_MAX];
+    int   row_count;               /* Total rows in table */
+    long  bytes_used;              /* Actual data bytes used */
+    long  bytes_allocated;         /* Total bytes allocated (pages * PAGE_SIZE) */
+    float fragmentation_ratio;     /* Fragmentation for this table (0.0 - 1.0) */
+    int   page_count;              /* Number of pages allocated */
+} TableStats;
+
+/* Get current storage statistics across all tables.
+ * Caller must free the returned pointer when done.
+ * Returns NULL on failure. */
+StorageStats *get_storage_stats(void);
+
+/* Fill caller-provided summary struct with current storage statistics.
+ * Returns 0 on success, -1 on failure. */
+int storage_get_summary(StorageStats *out_stats);
+
+/* Calculate storage capacity percentage (0-100).
+ * Returns percentage of storage used, or -1 on error. */
+int calculate_capacity_percentage(void);
+
+/* Get storage statistics for a specific table.
+ * Returns bytes used by the table's .db file, or -1 on error. */
+long get_table_size_bytes(const char *table_name);
+
+/* Get the number of rows (records) in a table.
+ * Returns row count, or -1 on error. */
+int get_table_row_count(const char *table_name);
+
+/* Calculate fragmentation ratio for a table.
+ * Fragmentation = (empty slots / total slots).
+ * Returns 0.0 (no fragmentation) to 1.0 (high fragmentation), or -1.0 on error. */
+float get_table_fragmentation(const char *table_name);
+
+/* Get detailed statistics for a specific table.
+ * Caller must provide a valid TableStats pointer to populate.
+ * Returns 0 on success, -1 on failure. */
+int get_table_stats(const char *table_name, TableStats *stats);
+
+/* Dynamic storage capacity controls */
+unsigned int storage_get_max_pages_per_table(void);
+int storage_set_auto_expand(int enabled);
+int storage_get_auto_expand(void);
 
 #endif /* STORAGE_H */
