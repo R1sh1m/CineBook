@@ -544,7 +544,7 @@ void show_auth_menu(SessionContext *ctx)
         printf("  │                                                                 │\n");
         printf("  │    [ 1 ]  Login                     (If Already have an account)│\n");
         printf("  │                                                                 │\n");
-        printf("  │    [ 2 ]  Create an Account         (Join CineBook us today)    │\n");
+        printf("  │    [ 2 ]  Create an Account         (Join CineBook today)       │\n");
         printf("  │                                                                 │\n");
         printf("  │    [ 3 ]  Exit                                                  │\n");
         printf("  │                                                                 │\n");
