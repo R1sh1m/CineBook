@@ -21,10 +21,8 @@
 #include "session.h"
 #include "location.h"
 #include "txn.h"
+#include "banner.h"
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * SECTION 1 — SHA-256  (FIPS 180-4, pure C, ~85 lines)
- * ═══════════════════════════════════════════════════════════════════════════*/
 
 /* Initial hash values H0..H7 — first 32 bits of the fractional parts of the
  * square roots of the first 8 primes. */
@@ -64,7 +62,6 @@ static const uint32_t SHA256_K[64] = {
 
 void sha256_hex(const char *input, char out_buf[65])
 {
-    /* --- 1. Length and bit count ---------------------------------------- */
     size_t msg_len   = strlen(input);
     uint64_t bit_len = (uint64_t)msg_len * 8u;
 
@@ -74,7 +71,6 @@ void sha256_hex(const char *input, char out_buf[65])
     while (padded % 64 != 56) padded++;
     padded += 8;   /* add the 64-bit big-endian length */
 
-    /* --- 2. Build padded message on the heap ----------------------------- */
     uint8_t *m = (uint8_t *)calloc(padded, 1);
     if (!m) { memset(out_buf, '0', 64); out_buf[64] = '\0'; return; }
 
@@ -85,11 +81,9 @@ void sha256_hex(const char *input, char out_buf[65])
         m[padded - 8 + i] = (uint8_t)((bit_len >> (56u - 8u * (unsigned)i)) & 0xFFu);
     }
 
-    /* --- 3. Initialise hash state --------------------------------------- */
     uint32_t h[8];
     memcpy(h, SHA256_H0, sizeof(h));
 
-    /* --- 4. Process each 512-bit (64-byte) chunk ----------------------- */
     for (size_t chunk = 0; chunk < padded; chunk += 64) {
         uint32_t w[64];
         /* Prepare message schedule */
@@ -118,16 +112,12 @@ void sha256_hex(const char *input, char out_buf[65])
 
     free(m);
 
-    /* --- 5. Produce hex output ------------------------------------------ */
     for (int i = 0; i < 8; i++) {
         snprintf(out_buf + i*8, 9, "%08x", h[i]);
     }
     out_buf[64] = '\0';
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * SECTION 2 — Input helpers
- * ═══════════════════════════════════════════════════════════════════════════*/
 
 /* Read a line from stdin into buf[size], strip trailing newline.
  * Returns 1 on success, 0 on EOF/error. */
@@ -232,9 +222,6 @@ static int domain_is_academic(const char *domain)
     return found;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * SECTION 3 — login()
- * ═══════════════════════════════════════════════════════════════════════════*/
 
 int login(SessionContext *ctx)
 {
@@ -314,9 +301,6 @@ int login(SessionContext *ctx)
     return 0;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * SECTION 4 — signup()
- * ═══════════════════════════════════════════════════════════════════════════*/
 
 int signup(SessionContext *ctx)
 {
@@ -516,29 +500,22 @@ int signup(SessionContext *ctx)
     return 1;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * SECTION 5 — show_auth_menu()
- * ═══════════════════════════════════════════════════════════════════════════*/
 
 void show_auth_menu(SessionContext *ctx)
 {
     char buf[16];
+    const char *auth_heading[] = {
+        "  ╔═════════════════════════════════════════════════════════════════╗",
+        "  ║               Your Cinema. Your Seats. Your Story.              ║",
+        "  ╚═════════════════════════════════════════════════════════════════╝"
+    };
 
     for (;;) {
         printf("\033[2J\033[H");
         fflush(stdout);
 
-        printf("  ╔═════════════════════════════════════════════════════════════════╗\n");
-        printf("  ║                                                                 ║\n");
-        printf("  ║   ██████╗██╗███╗   ██╗███████╗██████╗  ██████╗  ██████╗ ██╗  ██╗║\n");
-        printf("  ║  ██╔════╝██║████╗  ██║██╔════╝██╔══██╗██╔═══██╗██╔═══██╗██║ ██╔╝║\n");
-        printf("  ║  ██║     ██║██╔██╗ ██║█████╗  ██████╔╝██║   ██║██║   ██║█████╔╝ ║\n");
-        printf("  ║  ██║     ██║██║╚██╗██║██╔══╝  ██╔══██╗██║   ██║██║   ██║██╔═██╗ ║\n");
-        printf("  ║  ╚██████╗██║██║ ╚████║███████╗██████╔╝╚██████╔╝╚██████╔╝██║  ██╗║\n");
-        printf("  ║   ╚═════╝╚═╝╚═╝  ╚═══╝╚══════╝╚═════╝  ╚═════╝  ╚═════╝ ╚═╝  ╚═╝║\n");
-        printf("  ║                                                                 ║\n");
-        printf("  ║               Your Cinema. Your Seats. Your Story.              ║\n");
-        printf("  ╚═════════════════════════════════════════════════════════════════╝\n");
+        show_banner();
+        (void)print_rainbow_lines(auth_heading, 3, 0);
 
         printf("  ┌─────────────────────────────────────────────────────────────────┐\n");
         printf("  │                                                                 │\n");
@@ -573,9 +550,6 @@ void show_auth_menu(SessionContext *ctx)
     }
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * SECTION 6 — upgrade_to_student()
- * ═══════════════════════════════════════════════════════════════════════════*/
 
 int upgrade_to_student(SessionContext *ctx)
 {

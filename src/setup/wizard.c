@@ -9,6 +9,7 @@
 #include <curl/curl.h>
 
 #include "keystore.h"
+#include "banner.h"
 
 #ifdef _WIN32
 #include <io.h>
@@ -204,10 +205,15 @@ int setup_wizard_run(int force_prompt, char *io_api_key, size_t io_api_key_len)
         }
     }
 
-    printf("\n");
-    printf("  ╔══════════════════════════════════════════════════════════╗\n");
-    printf("  ║         CineBook First-Run Setup Wizard                 ║\n");
-    printf("  ╚══════════════════════════════════════════════════════════╝\n");
+    {
+        const char *wizard_banner[] = {
+            "  ╔══════════════════════════════════════════════════════════╗",
+            "  ║         CineBook First-Run Setup Wizard                  ║",
+            "  ╚══════════════════════════════════════════════════════════╝"
+        };
+        printf("\n");
+        (void)print_rainbow_lines(wizard_banner, 3, 0);
+    }
     printf("  TMDB API key setup is required for movie import features.\n");
     printf("  Get your free key: https://www.themoviedb.org/settings/api\n\n");
 

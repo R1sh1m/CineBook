@@ -1,13 +1,10 @@
 @echo off
-REM run.bat — CineBook auto-setup launcher (Windows)
-REM Requires MSYS2 installed at C:\msys64 (or detected automatically)
-REM ─────────────────────────────────────────────────────────────────
+REM CineBook auto-setup launcher (Windows)
 
 echo.
-echo   CineBook — Auto Setup ^& Launch
+echo   CineBook : Auto Setup ^& Launch
 echo   ----------------------------------
 
-REM ── 1. Find MSYS2 ────────────────────────────────────────────────────────
 SET MSYS2_PATH=
 IF EXIST "C:\msys64\usr\bin\bash.exe"           SET MSYS2_PATH=C:\msys64
 IF EXIST "C:\msys2\usr\bin\bash.exe"            SET MSYS2_PATH=C:\msys2
@@ -26,8 +23,7 @@ IF "%MSYS2_PATH%"=="" (
 
 echo   Found MSYS2 at: %MSYS2_PATH%
 
-REM ── 2. Delegate to bash run.sh inside MSYS2 MinGW64 ─────────────────────
-REM  MSYS_NO_PATHCONV=1 prevents MSYS2 from mangling Windows paths.
+REM Delegate to bash run.sh inside MSYS2 MinGW64.
 SET MSYS_NO_PATHCONV=1
 
 "%MSYS2_PATH%\msys2_shell.cmd" -mingw64 -defterm -no-start -c "cd '%CD:\=/%' && bash run.sh"

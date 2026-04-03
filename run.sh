@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 # run.sh — CineBook auto-setup launcher (Linux / macOS / MSYS2)
-# ─────────────────────────────────────────────────────────────
 # Usage:  bash run.sh
-# ─────────────────────────────────────────────────────────────
 
 set -euo pipefail
 
@@ -12,6 +10,19 @@ CYN='\033[0;36m'; BLD='\033[1m'; RST='\033[0m'
 ok()   { echo -e "${GRN}${BLD}  ✓ $*${RST}"; }
 warn() { echo -e "${YLW}${BLD}  ! $*${RST}"; }
 die()  { echo -e "${RED}${BLD}  ✗ $*${RST}"; exit 1; }
+
+has_lolcat() {
+    command -v lolcat &>/dev/null
+}
+
+print_rainbow_block() {
+    local text="$1"
+    if has_lolcat; then
+        printf "%b\n" "$text" | lolcat -f
+    else
+        echo -e "${CYN}${BLD}${text}${RST}"
+    fi
+}
 
 resolve_make_cmd() {
     if command -v make &>/dev/null; then
@@ -26,10 +37,9 @@ resolve_make_cmd() {
 }
 
 echo
-echo -e "${CYN}${BLD}  CineBook — Auto Setup & Launch${RST}"
+print_rainbow_block "  CineBook — Auto Setup & Launch"
 echo "  ────────────────────────────────────"
 
-# ── 1. Detect OS / environment ─────────────────────────────────────────────
 OS="$(uname -s)"
 case "$OS" in
     Linux*)     PLATFORM="linux" ;;
@@ -39,7 +49,6 @@ case "$OS" in
 esac
 ok "Platform: $PLATFORM"
 
-# ── 2. Install missing dependencies ────────────────────────────────────────
 case "$PLATFORM" in
     linux)
         if ! command -v gcc &>/dev/null; then
@@ -111,11 +120,9 @@ case "$PLATFORM" in
 esac
 ok "Dependencies ready"
 
-# ── 3. Create runtime directories ──────────────────────────────────────────
 mkdir -p data/db data/idx exports
 ok "Runtime directories ready"
 
-# ── 4. Build ────────────────────────────────────────────────────────────────
 echo
 echo -e "${CYN}  Building CineBook...${RST}"
 MAKE_CMD="$(resolve_make_cmd)" || die "No 'make' tool found. Install build tools (Linux: sudo apt install build-essential)."
@@ -124,7 +131,6 @@ if ! "$MAKE_CMD" -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo
 fi
 ok "Build complete"
 
-# ── 5. Seed database (only if empty) ───────────────────────────────────────
 shopt -s nullglob
 db_files=(data/db/*.db)
 shopt -u nullglob
@@ -139,9 +145,8 @@ else
     ok "Database already seeded ($DB_COUNT tables found)"
 fi
 
-# ── 6. Launch ───────────────────────────────────────────────────────────────
 echo
-echo -e "${CYN}${BLD}  Launching CineBook...${RST}"
+print_rainbow_block "  Launching CineBook..."
 echo "  Admin login → phone: 9000000001 | password: admin123"
 echo
 ./cinebook

@@ -2,7 +2,6 @@
 #include <stdio.h>
 #include <string.h>
 
-// ANSI color codes
 #define COLOR_RED     "\033[1;31m"
 #define COLOR_YELLOW  "\033[1;33m"
 #define COLOR_BLUE    "\033[1;34m"
@@ -11,7 +10,6 @@
 #define COLOR_RESET   "\033[0m"
 #define COLOR_BOLD    "\033[1m"
 
-// Icons for different severities
 #define ICON_ERROR    "✗"
 #define ICON_WARNING  "⚠"
 #define ICON_INFO     "ℹ"
@@ -56,17 +54,14 @@ void show_message_with_code(MessageSeverity severity, const char *title,
     printf("\n");
     print_separator();
     
-    // Title with icon
     printf("%s%s %s%s\n", color, icon, title, COLOR_RESET);
     print_separator();
     
-    // Message
     if (message && strlen(message) > 0) {
         printf("%s\n", message);
         printf("\n");
     }
     
-    // Suggested actions
     if (suggested_actions && action_count > 0) {
         printf("%sWhat to do:%s\n", COLOR_BOLD, COLOR_RESET);
         for (int i = 0; i < action_count; i++) {
@@ -75,7 +70,6 @@ void show_message_with_code(MessageSeverity severity, const char *title,
         printf("\n");
     }
     
-    // Footer with help link and error code
     print_separator();
     if (severity == MSG_ERROR || severity == MSG_WARNING) {
         printf("Need help? Check the troubleshooting guide:\n");
@@ -89,7 +83,6 @@ void show_message_with_code(MessageSeverity severity, const char *title,
     printf("\n");
 }
 
-// Template implementations - TMDB errors
 void show_tmdb_auth_error(void) {
     const char *actions[] = {
         "1. Visit https://www.themoviedb.org/settings/api",
@@ -159,7 +152,6 @@ void show_tmdb_server_error(void) {
                           actions, 3, ERR_TMDB_006);
 }
 
-// Database errors
 void show_db_transaction_error(void) {
     const char *actions[] = {
         "1. Try the operation again",
@@ -195,7 +187,6 @@ void show_db_corruption_error(void) {
                           actions, 4, ERR_DB_004);
 }
 
-// Authentication errors
 void show_auth_invalid_credentials_error(void) {
     const char *actions[] = {
         "1. Verify your phone number (must be 10 digits)",
